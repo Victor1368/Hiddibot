@@ -13,6 +13,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from hidify import HidifyClient
 from payment import PaymentManager
+from admin_manager import (
+    load_cards, add_card, update_card, delete_card, get_active_card, get_all_cards,
+    load_plans, add_plan, update_plan, delete_plan, get_active_plans, get_all_plans, get_plan,
+)
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -64,39 +68,24 @@ DATA_DIR.mkdir(exist_ok=True)
     ENTERING_CARD_NUMBER,
     ENTERING_CARD_HOLDER,
     ENTERING_TRACKING_CODE,
-) = range(7)
+    # وضعیت‌های مدیریت ادمین
+    ADMIN_MENU,
+    ADMIN_CARDS_MENU,
+    ADMIN_ADD_CARD_NUMBER,
+    ADMIN_ADD_CARD_HOLDER,
+    ADMIN_ADD_CARD_BANK,
+    ADMIN_PLANS_MENU,
+    ADMIN_ADD_PLAN_NAME,
+    ADMIN_ADD_PLAN_PRICE,
+    ADMIN_ADD_PLAN_DATA,
+    ADMIN_ADD_PLAN_DURATION,
+) = range(17)
 
-# ─── پلن‌های اشتراک ───
-PLANS = {
-    "basic": {
-        "name": "پایه",
-        "price": 50000,
-        "data_limit": 30,  # گیگابایت
-        "duration": 30,    # روز
-        "description": "۳۰ گیگ | ۳۰ روز",
-    },
-    "standard": {
-        "name": "استاندارد",
-        "price": 80000,
-        "data_limit": 60,
-        "duration": 30,
-        "description": "۶۰ گیگ | ۳۰ روز",
-    },
-    "premium": {
-        "name": "پریمیوم",
-        "price": 120000,
-        "data_limit": 100,
-        "duration": 30,
-        "description": "۱۰۰ گیگ | ۳۰ روز",
-    },
-    "unlimited": {
-        "name": "نامحدود",
-        "price": 200000,
-        "data_limit": 0,  # 0 = نامحدود
-        "duration": 30,
-        "description": "نامحدود | ۳۰ روز",
-    },
-}
+
+# ─── دریافت پلن‌ها ───
+def get_plans() -> dict:
+    """دریافت پلن‌های فعال"""
+    return get_active_plans()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -143,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # اضافه کردن دکمه ادمین
     if user.id == ADMIN_ID:
-        keyboard.append([KeyboardButton("📊 آمار ادمین")])
+        keyboard.append([KeyboardButton("🔧 پنل مدیریت")])
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -161,7 +150,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
     
     if user.id == ADMIN_ID:
-        welcome_text += "• 📊 آمار ادمین\n"
+        welcome_text += "• 🔧 پنل مدیریت\n"
     
     welcome_text += "\nلطفاً یکی از گزینه‌ها را انتخاب کنید:"
     
@@ -213,8 +202,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """نمایش پلن‌های اشتراک"""
+    plans = get_plans()
+    
+    if not plans:
+        await update.message.reply_text(
+            "❌ هیچ پلن فعالی وجود ندارد!\n\n"
+            "لطفاً با پشتیبانی تماس بگیرید."
+        )
+        return CHOOSING
+
     keyboard = []
-    for plan_id, plan in PLANS.items():
+    for plan_id, plan in plans.items():
         price_formatted = f"{plan['price']:,}".replace(",", "،")
         keyboard.append([
             InlineKeyboardButton(
@@ -243,11 +241,12 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CHOOSING
 
     plan_id = query.data.replace("plan_", "")
-    if plan_id not in PLANS:
+    plans = get_plans()
+    if plan_id not in plans:
         await query.edit_message_text("❌ پلن نامعتبر!")
         return CHOOSING
 
-    plan = PLANS[plan_id]
+    plan = plans[plan_id]
     context.user_data["selected_plan"] = plan_id
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
@@ -284,11 +283,12 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         return CONFIRMING_PURCHASE
 
     plan_id = context.user_data.get("selected_plan")
-    if not plan_id or plan_id not in PLANS:
+    plans = get_plans()
+    if not plan_id or plan_id not in plans:
         await query.edit_message_text("❌ خطا در انتخاب پلن!")
         return CHOOSING
 
-    plan = PLANS[plan_id]
+    plan = plans[plan_id]
     price_formatted = f"{plan['price']:,}".replace(",", "،")
 
     text = f"""
@@ -320,7 +320,8 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         return CHOOSING
 
     plan_id = context.user_data.get("selected_plan")
-    plan = PLANS.get(plan_id, {})
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
     if query.data == "pay_online":
@@ -329,6 +330,12 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data == "pay_card":
         # کارت به کارت
+        # دریافت کارت فعال
+        active_card = get_active_card()
+        card_number = active_card.get("card_number", CARD_NUMBER)
+        card_holder = active_card.get("card_holder", CARD_HOLDER)
+        bank_name = active_card.get("bank_name", BANK_NAME)
+
         text = f"""
 💵 **پرداخت کارت به کارت**
 
@@ -337,10 +344,10 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
 📌 **اطلاعات کارت:**
 ```
-{CARD_NUMBER}
+{card_number}
 ```
-👤 **نام صاحب کارت:** {CARD_HOLDER}
-🏦 **بانک:** {BANK_NAME}
+👤 **نام صاحب کارت:** {card_holder}
+🏦 **بانک:** {bank_name}
 
 ⚠️ **نکات مهم:**
 • دقیقاً مبلغ بالا را واریز کنید
@@ -406,7 +413,8 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user = update.effective_user
     plan_id = context.user_data.get("selected_plan")
-    plan = PLANS.get(plan_id, {})
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
     tracking_code = context.user_data.get("tracking_code", "")
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
@@ -511,11 +519,12 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CONFIRMING_PURCHASE
 
     plan_id = context.user_data.get("selected_plan")
-    if not plan_id or plan_id not in PLANS:
+    plans = get_plans()
+    if not plan_id or plan_id not in plans:
         await query.edit_message_text("❌ خطا در انتخاب پلن!")
         return CHOOSING
 
-    plan = PLANS[plan_id]
+    plan = plans[plan_id]
     user = update.effective_user
 
     # ساخت درخواست پرداخت
@@ -603,7 +612,8 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_active = hidify_user.get("is_active", False)
     status_text = "🟢 وضعیت: فعال\n" if is_active else "🔴 وضعیت: غیرفعال\n"
 
-    plan = PLANS.get(user_data.get("plan", ""), {})
+    plans = get_plans()
+    plan = plans.get(user_data.get("plan", ""), {})
     plan_name = plan.get("name", "نامشخص")
 
     text = f"""
@@ -669,8 +679,9 @@ async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     # نمایش پلن‌های تمدید
+    plans = get_plans()
     keyboard = []
-    for plan_id, plan in PLANS.items():
+    for plan_id, plan in plans.items():
         price_formatted = f"{plan['price']:,}".replace(",", "،")
         keyboard.append([
             InlineKeyboardButton(
@@ -702,11 +713,12 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     plan_id = query.data.replace("renew_", "")
-    if plan_id not in PLANS:
+    plans = get_plans()
+    if plan_id not in plans:
         await query.edit_message_text("❌ پلن نامعتبر!")
         return
 
-    plan = PLANS[plan_id]
+    plan = plans[plan_id]
     user = update.effective_user
     user_data = get_user_data(user.id)
 
@@ -812,7 +824,8 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
         return CONFIRMING_PURCHASE
 
     # پرداخت موفق - ساخت اشتراک
-    plan = PLANS[plan_id]
+    plans = get_plans()
+    plan = plans[plan_id]
     username = f"tg_{user.id}"
 
     # نمایش پیام در حال ساخت
@@ -918,8 +931,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await get_link(update, context)
     elif text == "❓ راهنما":
         return await help_command(update, context)
-    elif text == "📊 آمار ادمین" and update.effective_user.id == ADMIN_ID:
-        return await admin_stats(update, context)
+    elif text == "🔧 پنل مدیریت" and update.effective_user.id == ADMIN_ID:
+        return await admin_panel(update, context)
     else:
         await update.message.reply_text(
             "لطفاً از منوی زیر یکی از گزینه‌ها را انتخاب کنید:"
@@ -955,7 +968,8 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = int(parts[0])
     plan_id = parts[1]
 
-    plan = PLANS.get(plan_id, {})
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
     username = f"tg_{user_id}"
 
     # ساخت اشتراک در Hidify
@@ -1090,6 +1104,467 @@ async def admin_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پنل مدیریت ادمین"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    text = """
+🔧 **پنل مدیریت**
+
+از منوی زیر می‌توانید تنظیمات ربات را مدیریت کنید:
+"""
+
+    keyboard = [
+        [InlineKeyboardButton("💳 مدیریت کارت‌ها", callback_data="admin_cards")],
+        [InlineKeyboardButton("📦 مدیریت پلن‌ها", callback_data="admin_plans")],
+        [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats_btn")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return ADMIN_MENU
+
+
+async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش منوی ادمین"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "admin_back":
+        await query.edit_message_text("❌ پنل مدیریت بسته شد.")
+        return ConversationHandler.END
+
+    if query.data == "admin_cards":
+        return await show_cards_menu(update, context)
+
+    if query.data == "admin_plans":
+        return await show_plans_menu(update, context)
+
+    if query.data == "admin_stats_btn":
+        return await admin_stats(update, context)
+
+    return ADMIN_MENU
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# مدیریت کارت‌ها
+# ═══════════════════════════════════════════════════════════════════════
+
+async def show_cards_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش منوی مدیریت کارت‌ها"""
+    query = update.callback_query
+    await query.answer()
+
+    cards = get_all_cards()
+
+    if not cards:
+        text = "💳 **مدیریت کارت‌ها**\n\n⚠️ هنوز کارتی اضافه نشده است.\n\nکارت جدید اضافه کنید:"
+    else:
+        text = "💳 **مدیریت کارت‌ها**\n\n"
+        for card_id, card in cards.items():
+            status = "🟢" if card.get("is_active") else "🔴"
+            text += f"{status} `{card_id}`\n"
+            text += f"  📌 {card['card_number']}\n"
+            text += f"  👤 {card['card_holder']}\n"
+            text += f"  🏦 {card['bank_name']}\n\n"
+
+    keyboard = [
+        [InlineKeyboardButton("➕ افزودن کارت", callback_data="add_card")],
+    ]
+
+    # اضافه کردن دکمه‌های مدیریت برای هر کارت
+    for card_id in cards:
+        keyboard.append([
+            InlineKeyboardButton(f"✏️ ویرایش {card_id}", callback_data=f"edit_card_{card_id}"),
+            InlineKeyboardButton(f"🗑 حذف {card_id}", callback_data=f"del_card_{card_id}"),
+        ])
+
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return ADMIN_CARDS_MENU
+
+
+async def cards_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش منوی کارت‌ها"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "admin_back_menu":
+        # بازگشت به پنل اصلی
+        text = """
+🔧 **پنل مدیریت**
+
+از منوی زیر می‌توانید تنظیمات ربات را مدیریت کنید:
+"""
+        keyboard = [
+            [InlineKeyboardButton("💳 مدیریت کارت‌ها", callback_data="admin_cards")],
+            [InlineKeyboardButton("📦 مدیریت پلن‌ها", callback_data="admin_plans")],
+            [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats_btn")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        return ADMIN_MENU
+
+    if query.data == "add_card":
+        await query.edit_message_text(
+            "💳 **افزودن کارت جدید**\n\n"
+            "شماره کارت (بدون خط تیره) را وارد کنید:\n"
+            "مثال: `6104337912345678`"
+        )
+        return ADMIN_ADD_CARD_NUMBER
+
+    if query.data.startswith("edit_card_"):
+        card_id = query.data.replace("edit_card_", "")
+        cards = get_all_cards()
+        if card_id in cards:
+            card = cards[card_id]
+            text = f"""
+✏️ **ویرایش کارت** `{card_id}`
+
+📌 شماره: {card['card_number']}
+👤 نام: {card['card_holder']}
+🏦 بانک: {card['bank_name']}
+{'🟢 فعال' if card.get('is_active') else '🔴 غیرفعال'}
+"""
+            keyboard = [
+                [InlineKeyboardButton("🔄 تغییر وضعیت", callback_data=f"toggle_card_{card_id}")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_cards")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        return ADMIN_CARDS_MENU
+
+    if query.data.startswith("toggle_card_"):
+        card_id = query.data.replace("toggle_card_", "")
+        cards = get_all_cards()
+        if card_id in cards:
+            current_status = cards[card_id].get("is_active", False)
+            update_card(card_id, is_active=not current_status)
+            status = "فعال" if not current_status else "غیرفعال"
+            await query.answer(f"کارت {status} شد!", show_alert=True)
+        return await show_cards_menu(update, context)
+
+    if query.data.startswith("del_card_"):
+        card_id = query.data.replace("del_card_", "")
+        result = delete_card(card_id)
+        if result.get("success"):
+            await query.answer("کارت حذف شد!", show_alert=True)
+        else:
+            await query.answer(f"خطا: {result.get('error')}", show_alert=True)
+        return await show_cards_menu(update, context)
+
+    return ADMIN_CARDS_MENU
+
+
+async def add_card_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت شماره کارت"""
+    card_number = update.message.text.strip().replace("-", "")
+
+    # بررسی شماره کارت
+    if not card_number.isdigit() or len(card_number) < 16:
+        await update.message.reply_text(
+            "❌ شماره کارت نامعتبر است!\n\n"
+            "لطفاً شماره ۱۶ رقمی کارت را وارد کنید:"
+        )
+        return ADMIN_ADD_CARD_NUMBER
+
+    context.user_data["new_card_number"] = card_number
+    await update.message.reply_text(
+        "👤 **نام صاحب کارت را وارد کنید:**\n\n"
+        "مثال: `علی رضایی`"
+    )
+    return ADMIN_ADD_CARD_HOLDER
+
+
+async def add_card_holder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت نام صاحب کارت"""
+    card_holder = update.message.text.strip()
+
+    if len(card_holder) < 3:
+        await update.message.reply_text(
+            "❌ نام نامعتبر است!\n\n"
+            "لطفاً نام کامل صاحب کارت را وارد کنید:"
+        )
+        return ADMIN_ADD_CARD_HOLDER
+
+    context.user_data["new_card_holder"] = card_holder
+    await update.message.reply_text(
+        "🏦 **نام بانک را وارد کنید:**\n\n"
+        "مثال: `بانک ملت`\n"
+        "یا: `سپه`، `صادرات`، `تجارت`، `ملی` و ..."
+    )
+    return ADMIN_ADD_CARD_BANK
+
+
+async def add_card_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت نام بانک"""
+    bank_name = update.message.text.strip()
+
+    card_number = context.user_data.get("new_card_number", "")
+    card_holder = context.user_data.get("new_card_holder", "")
+
+    # افزودن کارت
+    result = add_card(card_number, card_holder, bank_name)
+
+    if result.get("success"):
+        await update.message.reply_text(
+            f"✅ **کارت با موفقیت اضافه شد!**\n\n"
+            f"📌 شماره: `{card_number}`\n"
+            f"👤 نام: {card_holder}\n"
+            f"🏦 بانک: {bank_name}\n\n"
+            f"برای مدیریت کارت‌ها، از دستور /admin_panel استفاده کنید.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ خطا در افزودن کارت:\n{result.get('error', 'نامشخص')}"
+        )
+
+    # پاک کردن اطلاعات موقت
+    context.user_data.pop("new_card_number", None)
+    context.user_data.pop("new_card_holder", None)
+
+    return ConversationHandler.END
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# مدیریت پلن‌ها
+# ═══════════════════════════════════════════════════════════════════════
+
+async def show_plans_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش منوی مدیریت پلن‌ها"""
+    query = update.callback_query
+    await query.answer()
+
+    plans = get_all_plans()
+
+    if not plans:
+        text = "📦 **مدیریت پلن‌ها**\n\n⚠️ هنوز پلنی اضافه نشده است.\n\nپلن جدید اضافه کنید:"
+    else:
+        text = "📦 **مدیریت پلن‌ها**\n\n"
+        for plan_id, plan in plans.items():
+            status = "🟢" if plan.get("is_active") else "🔴"
+            price_formatted = f"{plan['price']:,}".replace(",", "،")
+            text += f"{status} `{plan_id}`\n"
+            text += f"  📋 {plan['name']}\n"
+            text += f"  💰 {price_formatted} تومان\n"
+            text += f"  📊 {plan.get('description', '')}\n\n"
+
+    keyboard = [
+        [InlineKeyboardButton("➕ افزودن پلن", callback_data="add_plan")],
+    ]
+
+    # اضافه کردن دکمه‌های مدیریت برای هر پلن
+    for plan_id in plans:
+        keyboard.append([
+            InlineKeyboardButton(f"✏️ ویرایش {plan_id}", callback_data=f"edit_plan_{plan_id}"),
+            InlineKeyboardButton(f"🗑 حذف {plan_id}", callback_data=f"del_plan_{plan_id}"),
+        ])
+
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return ADMIN_PLANS_MENU
+
+
+async def plans_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش منوی پلن‌ها"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "admin_back_menu":
+        # بازگشت به پنل اصلی
+        text = """
+🔧 **پنل مدیریت**
+
+از منوی زیر می‌توانید تنظیمات ربات را مدیریت کنید:
+"""
+        keyboard = [
+            [InlineKeyboardButton("💳 مدیریت کارت‌ها", callback_data="admin_cards")],
+            [InlineKeyboardButton("📦 مدیریت پلن‌ها", callback_data="admin_plans")],
+            [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats_btn")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        return ADMIN_MENU
+
+    if query.data == "add_plan":
+        await query.edit_message_text(
+            "📦 **افزودن پلن جدید**\n\n"
+            "نام پلن را وارد کنید:\n"
+            "مثال: ` Platinum `، ` VIP `، ` ویژه `"
+        )
+        return ADMIN_ADD_PLAN_NAME
+
+    if query.data.startswith("edit_plan_"):
+        plan_id = query.data.replace("edit_plan_", "")
+        plans = get_all_plans()
+        if plan_id in plans:
+            plan = plans[plan_id]
+            price_formatted = f"{plan['price']:,}".replace(",", "،")
+            text = f"""
+✏️ **ویرایش پلن** `{plan_id}`
+
+📋 نام: {plan['name']}
+💰 قیمت: {price_formatted} تومان
+📊 حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگ
+⏰ مدت: {plan.get('duration', 30)} روز
+{'🟢 فعال' if plan.get('is_active') else '🔴 غیرفعال'}
+"""
+            keyboard = [
+                [InlineKeyboardButton("🔄 تغییر وضعیت", callback_data=f"toggle_plan_{plan_id}")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_plans")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        return ADMIN_PLANS_MENU
+
+    if query.data.startswith("toggle_plan_"):
+        plan_id = query.data.replace("toggle_plan_", "")
+        plans = get_all_plans()
+        if plan_id in plans:
+            current_status = plans[plan_id].get("is_active", False)
+            update_plan(plan_id, is_active=not current_status)
+            status = "فعال" if not current_status else "غیرفعال"
+            await query.answer(f"پلن {status} شد!", show_alert=True)
+        return await show_plans_menu(update, context)
+
+    if query.data.startswith("del_plan_"):
+        plan_id = query.data.replace("del_plan_", "")
+        result = delete_plan(plan_id)
+        if result.get("success"):
+            await query.answer("پلن حذف شد!", show_alert=True)
+        else:
+            await query.answer(f"خطا: {result.get('error')}", show_alert=True)
+        return await show_plans_menu(update, context)
+
+    return ADMIN_PLANS_MENU
+
+
+async def add_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت نام پلن"""
+    plan_name = update.message.text.strip()
+
+    if len(plan_name) < 2:
+        await update.message.reply_text(
+            "❌ نام پلن نامعتبر است!\n\n"
+            "لطفاً نام پلن را وارد کنید:"
+        )
+        return ADMIN_ADD_PLAN_NAME
+
+    context.user_data["new_plan_name"] = plan_name
+    await update.message.reply_text(
+        "💰 **قیمت پلن (به تومان) را وارد کنید:**\n\n"
+        "مثال: `50000`\n"
+        "برای پلن رایگان، عدد `0` وارد کنید."
+    )
+    return ADMIN_ADD_PLAN_PRICE
+
+
+async def add_plan_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت قیمت پلن"""
+    price_text = update.message.text.strip()
+
+    try:
+        price = int(price_text)
+        if price < 0:
+            raise ValueError()
+    except:
+        await update.message.reply_text(
+            "❌ قیمت نامعتبر است!\n\n"
+            "لطفاً عدد صحیح وارد کنید:"
+        )
+        return ADMIN_ADD_PLAN_PRICE
+
+    context.user_data["new_plan_price"] = price
+    await update.message.reply_text(
+        "📊 **حجم پلن (به گیگابایت) را وارد کنید:**\n\n"
+        "مثال: `30`\n"
+        "برای پلن نامحدود، عدد `0` وارد کنید."
+    )
+    return ADMIN_ADD_PLAN_DATA
+
+
+async def add_plan_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت حجم پلن"""
+    data_text = update.message.text.strip()
+
+    try:
+        data_limit = int(data_text)
+        if data_limit < 0:
+            raise ValueError()
+    except:
+        await update.message.reply_text(
+            "❌ حجم نامعتبر است!\n\n"
+            "لطفاً عدد صحیح وارد کنید:"
+        )
+        return ADMIN_ADD_PLAN_DATA
+
+    context.user_data["new_plan_data"] = data_limit
+    await update.message.reply_text(
+        "⏰ **مدت پلن (به روز) را وارد کنید:**\n\n"
+        "مثال: `30` (برای یک ماه)\n"
+        "یا: `365` (برای یک سال)"
+    )
+    return ADMIN_ADD_PLAN_DURATION
+
+
+async def add_plan_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت مدت پلن"""
+    duration_text = update.message.text.strip()
+
+    try:
+        duration = int(duration_text)
+        if duration < 1:
+            raise ValueError()
+    except:
+        await update.message.reply_text(
+            "❌ مدت نامعتبر است!\n\n"
+            "لطفاً عدد صحیح وارد کنید:"
+        )
+        return ADMIN_ADD_PLAN_DURATION
+
+    plan_name = context.user_data.get("new_plan_name", "")
+    price = context.user_data.get("new_plan_price", 0)
+    data_limit = context.user_data.get("new_plan_data", 0)
+
+    # افزودن پلن
+    result = add_plan(plan_name, price, data_limit, duration)
+
+    if result.get("success"):
+        price_formatted = f"{price:,}".replace(",", "،")
+        data_text = f"{data_limit} گیگ" if data_limit > 0 else "نامحدود"
+        await update.message.reply_text(
+            f"✅ **پلن با موفقیت اضافه شد!**\n\n"
+            f"📋 نام: {plan_name}\n"
+            f"💰 قیمت: {price_formatted} تومان\n"
+            f"📊 حجم: {data_text}\n"
+            f"⏰ مدت: {duration} روز\n\n"
+            f"برای مدیریت پلن‌ها، از دستور /admin_panel استفاده کنید.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ خطا در افزودن پلن:\n{result.get('error', 'نامشخص')}"
+        )
+
+    # پاک کردن اطلاعات موقت
+    context.user_data.pop("new_plan_name", None)
+    context.user_data.pop("new_plan_price", None)
+    context.user_data.pop("new_plan_data", None)
+
+    return ConversationHandler.END
+
+
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """آمار ربات برای ادمین"""
     user = update.effective_user
@@ -1119,11 +1594,23 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         hidify_users = 0
 
+    # دریافت اطلاعات پلن‌ها و کارت‌ها
+    try:
+        plans = get_all_plans()
+        active_plans = len([p for p in plans.values() if p.get("is_active")])
+        cards = get_all_cards()
+        active_cards = len([c for c in cards.values() if c.get("is_active")])
+    except:
+        active_plans = active_cards = 0
+
     text = f"""
 📊 **آمار ربات**
 
 👥 **کاربران ربات:** {total_users}
 🌐 **کاربران Hidify:** {hidify_users}
+
+📦 **پلن‌ها:** {active_plans} فعال
+💳 **کارت‌ها:** {active_cards} فعال
 
 💰 **تراکنش‌ها:**
 • ⏳ در انتظار: {pending}
@@ -1147,6 +1634,7 @@ def main():
         entry_points=[
             CommandHandler("start", start),
             MessageHandler(filters.Regex("^🛒 خرید اشتراک$"), show_plans),
+            CommandHandler("admin_panel", admin_panel),
         ],
         states={
             CHOOSING: [
@@ -1155,6 +1643,7 @@ def main():
                 MessageHandler(filters.Regex("^📊 وضعیت اشتراک$"), show_status),
                 MessageHandler(filters.Regex("^🔗 لینک اتصال$"), get_link),
                 MessageHandler(filters.Regex("^❓ راهنما$"), help_command),
+                MessageHandler(filters.Regex("^🔧 پنل مدیریت$"), admin_panel),
             ],
             SELECTING_PLAN: [
                 CallbackQueryHandler(plan_selected),
@@ -1169,6 +1658,37 @@ def main():
             ],
             ENTERING_TRACKING_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
+            ],
+            # وضعیت‌های مدیریت ادمین
+            ADMIN_MENU: [
+                CallbackQueryHandler(admin_menu_handler),
+            ],
+            ADMIN_CARDS_MENU: [
+                CallbackQueryHandler(cards_menu_handler),
+            ],
+            ADMIN_ADD_CARD_NUMBER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_card_number),
+            ],
+            ADMIN_ADD_CARD_HOLDER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_card_holder),
+            ],
+            ADMIN_ADD_CARD_BANK: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_card_bank),
+            ],
+            ADMIN_PLANS_MENU: [
+                CallbackQueryHandler(plans_menu_handler),
+            ],
+            ADMIN_ADD_PLAN_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_name),
+            ],
+            ADMIN_ADD_PLAN_PRICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_price),
+            ],
+            ADMIN_ADD_PLAN_DATA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_data),
+            ],
+            ADMIN_ADD_PLAN_DURATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_duration),
             ],
         },
         fallbacks=[
@@ -1186,6 +1706,7 @@ def main():
     application.add_handler(CommandHandler("link", get_link))
     application.add_handler(CommandHandler("admin_stats", admin_stats))
     application.add_handler(CommandHandler("admin_test", admin_test))
+    application.add_handler(CommandHandler("admin_panel", admin_panel))
 
     # هندلر تمدید (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
