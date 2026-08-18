@@ -38,6 +38,10 @@ HIDIFY_PANEL_URL = os.getenv("HIDIFY_PANEL_URL")
 HIDIFY_API_KEY = os.getenv("HIDIFY_API_KEY")
 HIDIFY_PROXY_PATH = os.getenv("HIDIFY_PROXY_PATH")
 PAYMENT_GATEWAY = os.getenv("PAYMENT_GATEWAY", "zarinpal")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+CARD_NUMBER = os.getenv("CARD_NUMBER", "")
+CARD_HOLDER = os.getenv("CARD_HOLDER", "")
+BANK_NAME = os.getenv("BANK_NAME", "")
 
 # ─── تنظیم لاگینگ ───
 logging.basicConfig(
@@ -55,8 +59,11 @@ DATA_DIR.mkdir(exist_ok=True)
     CHOOSING,
     SELECTING_PLAN,
     CONFIRMING_PURCHASE,
-    ENTERING_USERNAME,
-) = range(4)
+    SELECTING_PAYMENT,
+    ENTERING_CARD_NUMBER,
+    ENTERING_CARD_HOLDER,
+    ENTERING_TRACKING_CODE,
+) = range(7)
 
 # ─── پلن‌های اشتراک ───
 PLANS = {
@@ -125,11 +132,18 @@ def save_user_data(telegram_user_id: int, data: dict):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور /start - شروع ربات"""
     user = update.effective_user
+    
+    # منوی معمولی
     keyboard = [
         [KeyboardButton("🛒 خرید اشتراک")],
         [KeyboardButton("🔄 تمدید اشتراک"), KeyboardButton("📊 وضعیت اشتراک")],
         [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنما")],
     ]
+    
+    # اضافه کردن دکمه ادمین
+    if user.id == ADMIN_ID:
+        keyboard.append([KeyboardButton("📊 آمار ادمین")])
+    
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     welcome_text = f"""
@@ -143,11 +157,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • 📊 مشاهده وضعیت اشتراک
 • 🔗 دریافت لینک اتصال
 • ❓ راهنما
-
-لطفاً یکی از گزینه‌ها را انتخاب کنید:
 """
+    
+    if user.id == ADMIN_ID:
+        welcome_text += "• 📊 آمار ادمین\n"
+    
+    welcome_text += "\nلطفاً یکی از گزینه‌ها را انتخاب کنید:"
+    
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
     return CHOOSING
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لغو مکالمه"""
+    await update.message.reply_text(
+        "❌ عملیات لغو شد.\n\n"
+        "برای شروع مجدد، دکمه «🛒 خرید اشتراک» رو بزنید."
+    )
+    return ConversationHandler.END
+
+
+async def timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ timeout مکالمه """
+    await update.message.reply_text(
+        "⏰ زمان مکالمه تمام شد.\n\n"
+        "برای شروع مجدد، دکمه «🛒 خرید اشتراک» رو بزنید."
+    )
+    return ConversationHandler.END
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,6 +268,207 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
     return CONFIRMING_PURCHASE
+
+
+async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """انتخاب روش پرداخت"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancel":
+        await query.edit_message_text("❌ عملیات لغو شد.")
+        return CHOOSING
+
+    if query.data != "confirm_purchase":
+        return CONFIRMING_PURCHASE
+
+    plan_id = context.user_data.get("selected_plan")
+    if not plan_id or plan_id not in PLANS:
+        await query.edit_message_text("❌ خطا در انتخاب پلن!")
+        return CHOOSING
+
+    plan = PLANS[plan_id]
+    price_formatted = f"{plan['price']:,}".replace(",", "،")
+
+    text = f"""
+💳 **انتخاب روش پرداخت**
+
+📋 پلن: {plan['name']}
+💰 مبلغ: {price_formatted} تومان
+
+لطفاً روش پرداخت را انتخاب کنید:
+"""
+
+    keyboard = [
+        [InlineKeyboardButton("💳 درگاه آنلاین", callback_data="pay_online")],
+        [InlineKeyboardButton("💵 کارت به کارت", callback_data="pay_card")],
+        [InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return SELECTING_PAYMENT
+
+
+async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش انتخاب روش پرداخت"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancel":
+        await query.edit_message_text("❌ عملیات لغو شد.")
+        return CHOOSING
+
+    plan_id = context.user_data.get("selected_plan")
+    plan = PLANS.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    if query.data == "pay_online":
+        # پرداخت آنلاین
+        return await confirm_purchase(update, context)
+
+    elif query.data == "pay_card":
+        # کارت به کارت
+        text = f"""
+💵 **پرداخت کارت به کارت**
+
+📋 پلن: {plan.get('name', 'نامشخص')}
+💰 مبلغ: {price_formatted} تومان
+
+📌 **اطلاعات کارت:**
+```
+{CARD_NUMBER}
+```
+👤 **نام صاحب کارت:** {CARD_HOLDER}
+🏦 **بانک:** {BANK_NAME}
+
+⚠️ **نکات مهم:**
+• دقیقاً مبلغ بالا را واریز کنید
+• بعد از واریز، شماره پیگیری را وارد کنید
+• رسید پرداخت برای ادمین ارسال میشود
+
+لطفاً بعد از واریز، شماره پیگیری (۱۰ یا ۱۲ رقمی) را وارد کنید:
+"""
+        await query.edit_message_text(text, parse_mode="Markdown")
+        return ENTERING_TRACKING_CODE
+
+    return SELECTING_PAYMENT
+
+
+async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت شماره پیگیری"""
+    tracking_code = update.message.text.strip()
+
+    # بررسی شماره پیگیری
+    if not tracking_code.isdigit() or len(tracking_code) < 10:
+        await update.message.reply_text(
+            "❌ شماره پیگیری نامعتبر است!\n\n"
+            "لطفاً شماره پیگیری ۱۰ یا ۱۲ رقمی را وارد کنید:"
+        )
+        return ENTERING_TRACKING_CODE
+
+    context.user_data["tracking_code"] = tracking_code
+    user = update.effective_user
+    plan_id = context.user_data.get("selected_plan")
+    plan = PLANS.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    # تایید اطلاعات
+    text = f"""
+✅ **تایید پرداخت کارت به کارت**
+
+📋 پلن: {plan.get('name', 'نامشخص')}
+💰 مبلغ: {price_formatted} تومان
+🔢 شماره پیگیری: {tracking_code}
+
+آیا اطلاعات صحیح است؟
+"""
+    keyboard = [
+        [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
+        [InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return CONFIRMING_PURCHASE
+
+
+async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تایید پرداخت کارت به کارت"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancel":
+        await query.edit_message_text("❌ عملیات لغو شد.")
+        return CHOOSING
+
+    if query.data != "confirm_card_payment":
+        return CONFIRMING_PURCHASE
+
+    user = update.effective_user
+    plan_id = context.user_data.get("selected_plan")
+    plan = PLANS.get(plan_id, {})
+    tracking_code = context.user_data.get("tracking_code", "")
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    # ذخیره تراکنش کارت به کارت
+    from payment import load_transactions, save_transactions
+    order_id = f"card_{user.id}_{int(datetime.now().timestamp())}"
+    transactions = load_transactions()
+    transactions[order_id] = {
+        "user_id": user.id,
+        "username": user.username or user.first_name,
+        "plan_name": plan.get("name", "نامشخص"),
+        "amount": plan.get("price", 0),
+        "gateway": "card_to_card",
+        "tracking_code": tracking_code,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+    }
+    save_transactions(transactions)
+
+    # ارسال پیام به ادمین
+    admin_text = f"""
+🔔 **رسید پرداخت جدید**
+
+👤 **کاربر:** {user.first_name}
+🆔 **آیدی:** `{user.id}`
+💬 **یوزرنیم:** @{user.username or 'ندارد'}
+
+📋 **پلن:** {plan.get('name', 'نامشخص')}
+💰 **مبلغ:** {price_formatted} تومان
+🔢 **شماره پیگیری:** `{tracking_code}`
+
+⏰ **زمان:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+
+    keyboard = [
+        [InlineKeyboardButton("✅ تایید", callback_data=f"admin_approve_{user.id}_{plan_id}")],
+        [InlineKeyboardButton("❌ رد", callback_data=f"admin_reject_{user.id}")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        if ADMIN_ID:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=admin_text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        logger.error(f"Error sending to admin: {e}")
+
+    # پیام به کاربر
+    await query.edit_message_text(
+        f"✅ **رسید پرداخت ارسال شد!**\n\n"
+        f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+        f"💰 مبلغ: {price_formatted} تومان\n"
+        f"🔢 شماره پیگیری: {tracking_code}\n\n"
+        f"⏳ پرداخت شما در حال بررسی است.\n"
+        f"پس از تایید ادمین، اشتراک شما فعال میشود.\n\n"
+        f"💬 پشتیبانی: @admin",
+        parse_mode="Markdown",
+    )
+    return CHOOSING
 
 
 async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -553,49 +790,91 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
     username = f"tg_{user.id}"
 
     # نمایش پیام در حال ساخت
-    await query.edit_message_text("⏳ در حال ساخت اشتراک...")
+    try:
+        await query.edit_message_text("⏳ در حال ساخت اشتراک...")
+    except Exception as e:
+        logger.error(f"Error editing message: {e}")
 
-    result = hidify.create_user(
-        name=username,
-        usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
-        package_days=plan["duration"],
-        enable=True
-    )
+    # ساخت کاربر در Hidify
+    try:
+        result = hidify.create_user(
+            name=username,
+            usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
+            package_days=plan["duration"],
+            enable=True
+        )
+    except Exception as e:
+        logger.error(f"Error creating user in Hidify: {e}")
+        try:
+            await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{str(e)[:200]}")
+        except:
+            pass
+        return CHOOSING
 
     if "error" in result:
-        await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error']}")
+        try:
+            await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error'][:200]}")
+        except:
+            pass
         return CHOOSING
 
     # ذخیره اطلاعات کاربر
-    user_uuid = result.get("uuid", "")
-    user_data = {
-        "telegram_id": user.id,
-        "username": username,
-        "hidify_uuid": user_uuid,
-        "plan": plan_id,
-        "created_at": datetime.now().isoformat(),
-        "data_limit": plan["data_limit"],
-    }
-    save_user_data(user.id, user_data)
+    try:
+        user_uuid = result.get("uuid", "")
+        user_data = {
+            "telegram_id": user.id,
+            "username": username,
+            "hidify_uuid": user_uuid,
+            "plan": plan_id,
+            "created_at": datetime.now().isoformat(),
+            "data_limit": plan["data_limit"],
+        }
+        save_user_data(user.id, user_data)
+        logger.info(f"User data saved: {user.id} -> {user_uuid}")
+    except Exception as e:
+        logger.error(f"Error saving user data: {e}")
+        # ادامه بده حتی اگه ذخیره نشد
 
     # بروزرسانی تراکنش
-    from payment import load_transactions, save_transactions
-    transactions = load_transactions()
-    if order_id in transactions:
-        transactions[order_id]["status"] = "completed"
-        transactions[order_id]["ref_id"] = verify_result.get("ref_id") or verify_result.get("track_id")
-        save_transactions(transactions)
+    try:
+        from payment import load_transactions, save_transactions
+        transactions = load_transactions()
+        if order_id in transactions:
+            transactions[order_id]["status"] = "completed"
+            transactions[order_id]["ref_id"] = verify_result.get("ref_id") or verify_result.get("track_id")
+            save_transactions(transactions)
+    except Exception as e:
+        logger.error(f"Error updating transaction: {e}")
+        # ادامه بده حتی اگه تراکنش آپدیت نشد
 
+    # نمایش پیام موفقیت
     price_formatted = f"{plan['price']:,}".replace(",", "،")
-    await query.edit_message_text(
-        f"✅ **پرداخت موفق! اشتراک فعال شد!**\n\n"
-        f"📋 پلن: {plan['name']}\n"
-        f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
-        f"⏰ مدت: {plan['duration']} روز\n"
-        f"💰 قیمت: {price_formatted} تومان\n\n"
-        f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
-        parse_mode="Markdown",
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ **پرداخت موفق! اشتراک فعال شد!**\n\n"
+            f"📋 پلن: {plan['name']}\n"
+            f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
+            f"⏰ مدت: {plan['duration']} روز\n"
+            f"💰 قیمت: {price_formatted} تومان\n\n"
+            f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Error sending success message: {e}")
+        # تلاش برای ارسال پیام جدید
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=f"✅ **پرداخت موفق! اشتراک فعال شد!**\n\n"
+                     f"📋 پلن: {plan['name']}\n"
+                     f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
+                     f"⏰ مدت: {plan['duration']} روز\n"
+                     f"💰 قیمت: {price_formatted} تومان\n\n"
+                     f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
+                parse_mode="Markdown",
+            )
+        except:
+            pass
     return CHOOSING
 
 
@@ -613,6 +892,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await get_link(update, context)
     elif text == "❓ راهنما":
         return await help_command(update, context)
+    elif text == "📊 آمار ادمین" and update.effective_user.id == ADMIN_ID:
+        return await admin_stats(update, context)
     else:
         await update.message.reply_text(
             "لطفاً از منوی زیر یکی از گزینه‌ها را انتخاب کنید:"
@@ -623,6 +904,189 @@ async def copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """کپی لینک"""
     query = update.callback_query
     await query.answer("لینک کپی شد! ✅", show_alert=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# هندلرهای ادمین
+# ═══════════════════════════════════════════════════════════════════════
+
+async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تایید پرداخت توسط ادمین"""
+    query = update.callback_query
+    await query.answer()
+
+    # بررسی ادمین بودن
+    if update.effective_user.id != ADMIN_ID:
+        await query.answer("❌ شما ادمین نیستید!", show_alert=True)
+        return
+
+    data = query.data.replace("admin_approve_", "")
+    parts = data.split("_")
+    if len(parts) < 2:
+        await query.edit_message_text("❌ داده نامعتبر!")
+        return
+
+    user_id = int(parts[0])
+    plan_id = parts[1]
+
+    plan = PLANS.get(plan_id, {})
+    username = f"tg_{user_id}"
+
+    # ساخت اشتراک در Hidify
+    try:
+        result = hidify.create_user(
+            name=username,
+            usage_limit_gb=plan.get("data_limit") if plan.get("data_limit", 0) > 0 else None,
+            package_days=plan.get("duration", 30),
+            enable=True
+        )
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{str(e)[:200]}")
+        return
+
+    if "error" in result:
+        await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error'][:200]}")
+        return
+
+    # ذخیره اطلاعات کاربر
+    try:
+        user_uuid = result.get("uuid", "")
+        user_data = {
+            "telegram_id": user_id,
+            "username": username,
+            "hidify_uuid": user_uuid,
+            "plan": plan_id,
+            "created_at": datetime.now().isoformat(),
+            "data_limit": plan.get("data_limit", 0),
+        }
+        save_user_data(user_id, user_data)
+    except Exception as e:
+        logger.error(f"Error saving user data: {e}")
+
+    # بروزرسانی تراکنش
+    try:
+        from payment import load_transactions, save_transactions
+        transactions = load_transactions()
+        for tid, trans in transactions.items():
+            if trans.get("user_id") == user_id and trans.get("status") == "pending":
+                transactions[tid]["status"] = "completed"
+                save_transactions(transactions)
+                break
+    except Exception as e:
+        logger.error(f"Error updating transaction: {e}")
+
+    # پیام به ادمین
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+    await query.edit_message_text(
+        f"✅ **اشتراک فعال شد!**\n\n"
+        f"👤 کاربر: `{user_id}`\n"
+        f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+        f"📊 حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگ\n"
+        f"💰 مبلغ: {price_formatted} تومان",
+        parse_mode="Markdown",
+    )
+
+    # پیام به کاربر
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"✅ **پرداخت تایید شد! اشتراک فعال شد!**\n\n"
+                 f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+                 f"📊 حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگ\n"
+                 f"⏰ مدت: {plan.get('duration', 30)} روز\n\n"
+                 f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Error sending message to user: {e}")
+
+
+async def admin_reject_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رد پرداخت توسط ادمین"""
+    query = update.callback_query
+    await query.answer()
+
+    # بررسی ادمین بودن
+    if update.effective_user.id != ADMIN_ID:
+        await query.answer("❌ شما ادمین نیستید!", show_alert=True)
+        return
+
+    data = query.data.replace("admin_reject_", "")
+    user_id = int(data)
+
+    # بروزرسانی تراکنش
+    try:
+        from payment import load_transactions, save_transactions
+        transactions = load_transactions()
+        for tid, trans in transactions.items():
+            if trans.get("user_id") == user_id and trans.get("status") == "pending":
+                transactions[tid]["status"] = "rejected"
+                save_transactions(transactions)
+                break
+    except Exception as e:
+        logger.error(f"Error updating transaction: {e}")
+
+    # پیام به ادمین
+    await query.edit_message_text(
+        f"❌ **پرداخت رد شد**\n\n"
+        f"👤 کاربر: `{user_id}`",
+        parse_mode="Markdown",
+    )
+
+    # پیام به کاربر
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="❌ **پرداخت شما تایید نشد!**\n\n"
+                 "لطفاً با پشتیبانی تماس بگیرید.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Error sending message to user: {e}")
+
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """آمار ربات برای ادمین"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    # شمارش کاربران
+    user_files = list(DATA_DIR.glob("*.json"))
+    total_users = len(user_files)
+
+    # شمارش تراکنش‌ها
+    try:
+        from payment import load_transactions
+        transactions = load_transactions()
+        pending = sum(1 for t in transactions.values() if t.get("status") == "pending")
+        completed = sum(1 for t in transactions.values() if t.get("status") == "completed")
+        rejected = sum(1 for t in transactions.values() if t.get("status") == "rejected")
+    except:
+        pending = completed = rejected = 0
+
+    # دریافت اطلاعات Hidify
+    try:
+        users = hidify.get_users()
+        hidify_users = len(users) if isinstance(users, list) else 0
+    except:
+        hidify_users = 0
+
+    text = f"""
+📊 **آمار ربات**
+
+👥 **کاربران ربات:** {total_users}
+🌐 **کاربران Hidify:** {hidify_users}
+
+💰 **تراکنش‌ها:**
+• ⏳ در انتظار: {pending}
+• ✅ تایید شده: {completed}
+• ❌ رد شده: {rejected}
+"""
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -652,11 +1116,23 @@ def main():
                 CallbackQueryHandler(plan_selected),
             ],
             CONFIRMING_PURCHASE: [
-                CallbackQueryHandler(confirm_purchase, pattern="^(confirm_purchase|cancel)$"),
+                CallbackQueryHandler(select_payment_method, pattern="^(confirm_purchase|cancel)$"),
                 CallbackQueryHandler(verify_payment_callback, pattern="^(verify_payment|cancel)$"),
+                CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
+            ],
+            SELECTING_PAYMENT: [
+                CallbackQueryHandler(handle_payment_method),
+            ],
+            ENTERING_TRACKING_CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
             ],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[
+            CommandHandler("start", start),
+            CommandHandler("cancel", cancel),
+            MessageHandler(filters.Regex("^❌ لغو$"), cancel),
+        ],
+        conversation_timeout=300,  # 5 دقیقه timeout
     )
 
     # اضافه کردن هندلرها
@@ -664,10 +1140,15 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", show_status))
     application.add_handler(CommandHandler("link", get_link))
+    application.add_handler(CommandHandler("admin_stats", admin_stats))
 
     # هندلر تمدید (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link$"))
+
+    # هندلرهای ادمین
+    application.add_handler(CallbackQueryHandler(admin_approve_payment, pattern="^admin_approve_"))
+    application.add_handler(CallbackQueryHandler(admin_reject_payment, pattern="^admin_reject_"))
 
     # هندلر پیام‌های متنی
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
