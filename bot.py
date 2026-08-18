@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from hidify import HidifyClient
+from payment import PaymentManager
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -36,6 +37,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 HIDIFY_PANEL_URL = os.getenv("HIDIFY_PANEL_URL")
 HIDIFY_API_KEY = os.getenv("HIDIFY_API_KEY")
 HIDIFY_PROXY_PATH = os.getenv("HIDIFY_PROXY_PATH")
+PAYMENT_GATEWAY = os.getenv("PAYMENT_GATEWAY", "zarinpal")
 
 # ─── تنظیم لاگینگ ───
 logging.basicConfig(
@@ -233,7 +235,7 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تایید خرید"""
+    """تایید خرید و ارسال لینک پرداخت"""
     query = update.callback_query
     await query.answer()
 
@@ -251,44 +253,54 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     plan = PLANS[plan_id]
     user = update.effective_user
-    username = f"tg_{user.id}"
 
-    # ساخت کاربر در Hidify
-    await query.edit_message_text("⏳ در حال ساخت اشتراک...")
-    result = await hidify.create_user(
-        name=username,
-        usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
-        package_days=plan["duration"],
-        enable=True
+    # ساخت درخواست پرداخت
+    await query.edit_message_text("⏳ در حال ساخت درخواست پرداخت...")
+
+    # آدرس بازگشت (وب‌سایت ربات)
+    callback_url = f"https://t.me/{context.bot.username}"
+
+    # ایجاد پرداخت
+    payment = PaymentManager(PAYMENT_GATEWAY)
+    payment_result = payment.create_payment(
+        amount=plan["price"],
+        user_id=user.id,
+        plan_name=plan["name"],
+        callback_url=callback_url,
     )
 
-    if "error" in result:
-        await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error']}")
+    if not payment_result.get("success"):
+        await query.edit_message_text(
+            f"❌ خطا در ساخت درخواست پرداخت:\n{payment_result.get('error', 'Unknown error')}"
+        )
         return CHOOSING
 
-    # ذخیره اطلاعات کاربر
-    user_uuid = result.get("uuid", "")
-    user_data = {
-        "telegram_id": user.id,
-        "username": username,
-        "hidify_uuid": user_uuid,
-        "plan": plan_id,
-        "created_at": datetime.now().isoformat(),
-        "data_limit": plan["data_limit"],
-    }
-    save_user_data(user.id, user_data)
+    # ذخیره اطلاعات پرداخت
+    order_id = payment_result.get("order_id", "")
+    context.user_data["payment_order_id"] = order_id
+    context.user_data["payment_amount"] = plan["price"]
 
+    # ارسال لینک پرداخت
+    pay_url = payment.get_pay_url(payment_result)
     price_formatted = f"{plan['price']:,}".replace(",", "،")
+
+    keyboard = [
+        [InlineKeyboardButton("💳 پرداخت", url=pay_url)],
+        [InlineKeyboardButton("✅ پرداخت کردم", callback_data="verify_payment")],
+        [InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await query.edit_message_text(
-        f"✅ **اشتراک شما با موفقیت فعال شد!**\n\n"
+        f"💳 **درخواست پرداخت ساخته شد!**\n\n"
         f"📋 پلن: {plan['name']}\n"
-        f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
-        f"⏰ مدت: {plan['duration']} روز\n"
-        f"💰 قیمت: {price_formatted} تومان\n\n"
-        f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
+        f"💰 مبلغ: {price_formatted} تومان\n\n"
+        f"روی دکمه «💳 پرداخت» کلیک کنید و پرداخت رو انجام بدید.\n"
+        f"بعد از پرداخت، روی «✅ پرداخت کردم» کلیک کنید.",
+        reply_markup=reply_markup,
         parse_mode="Markdown",
     )
-    return CHOOSING
+    return CONFIRMING_PURCHASE
 
 
 async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,7 +317,7 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # دریافت اطلاعات از Hidify
     user_uuid = user_data.get("hidify_uuid", "")
-    hidify_user = await hidify.get_user(user_uuid)
+    hidify_user = hidify.get_user(user_uuid)
 
     if "error" in hidify_user:
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات:\n{hidify_user['error']}")
@@ -452,7 +464,7 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # بروزرسانی در Hidify
     user_uuid = user_data.get("hidify_uuid", "")
-    result = await hidify.update_user(
+    result = hidify.update_user(
         user_uuid,
         usage_limit_GB=plan["data_limit"] if plan["data_limit"] > 0 else None,
         package_days=plan["duration"]
@@ -478,6 +490,113 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
         parse_mode="Markdown",
     )
+
+
+async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تایید پرداخت"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancel":
+        await query.edit_message_text("❌ عملیات لغو شد.")
+        return CHOOSING
+
+    if query.data != "verify_payment":
+        return CONFIRMING_PURCHASE
+
+    # بررسی آیا اشتراک قبلاً ساخته شده
+    user = update.effective_user
+    existing_data = get_user_data(user.id)
+    if existing_data and existing_data.get("hidify_uuid"):
+        await query.edit_message_text(
+            "✅ اشتراک شما قبلاً فعال شده است!\n\n"
+            "برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید."
+        )
+        return CHOOSING
+
+    await query.edit_message_text("⏳ در حال بررسی پرداخت...")
+
+    order_id = context.user_data.get("payment_order_id", "")
+    amount = context.user_data.get("payment_amount", 0)
+    plan_id = context.user_data.get("selected_plan")
+
+    if not order_id or not plan_id:
+        await query.edit_message_text("❌ اطلاعات پرداخت یافت نشد!")
+        return CHOOSING
+
+    # تایید پرداخت
+    payment = PaymentManager(PAYMENT_GATEWAY)
+    verify_result = payment.verify_payment(
+        authority=context.user_data.get("payment_authority"),
+        amount=amount,
+        payment_id=context.user_data.get("payment_id"),
+        order_id=order_id,
+    )
+
+    if not verify_result.get("success"):
+        keyboard = [
+            [InlineKeyboardButton("🔄 تلاش مجدد", callback_data="confirm_purchase")],
+            [InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"❌ **پرداخت تایید نشد!**\n\n"
+            f"دلیل: {verify_result.get('error', 'نامشخص')}\n\n"
+            f"اگر پرداخت رو انجام دادید، دوباره تلاش کنید.",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+        return CONFIRMING_PURCHASE
+
+    # پرداخت موفق - ساخت اشتراک
+    plan = PLANS[plan_id]
+    username = f"tg_{user.id}"
+
+    # نمایش پیام در حال ساخت
+    await query.edit_message_text("⏳ در حال ساخت اشتراک...")
+
+    result = hidify.create_user(
+        name=username,
+        usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
+        package_days=plan["duration"],
+        enable=True
+    )
+
+    if "error" in result:
+        await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error']}")
+        return CHOOSING
+
+    # ذخیره اطلاعات کاربر
+    user_uuid = result.get("uuid", "")
+    user_data = {
+        "telegram_id": user.id,
+        "username": username,
+        "hidify_uuid": user_uuid,
+        "plan": plan_id,
+        "created_at": datetime.now().isoformat(),
+        "data_limit": plan["data_limit"],
+    }
+    save_user_data(user.id, user_data)
+
+    # بروزرسانی تراکنش
+    from payment import load_transactions, save_transactions
+    transactions = load_transactions()
+    if order_id in transactions:
+        transactions[order_id]["status"] = "completed"
+        transactions[order_id]["ref_id"] = verify_result.get("ref_id") or verify_result.get("track_id")
+        save_transactions(transactions)
+
+    price_formatted = f"{plan['price']:,}".replace(",", "،")
+    await query.edit_message_text(
+        f"✅ **پرداخت موفق! اشتراک فعال شد!**\n\n"
+        f"📋 پلن: {plan['name']}\n"
+        f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
+        f"⏰ مدت: {plan['duration']} روز\n"
+        f"💰 قیمت: {price_formatted} تومان\n\n"
+        f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
+        parse_mode="Markdown",
+    )
+    return CHOOSING
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -533,7 +652,8 @@ def main():
                 CallbackQueryHandler(plan_selected),
             ],
             CONFIRMING_PURCHASE: [
-                CallbackQueryHandler(confirm_purchase),
+                CallbackQueryHandler(confirm_purchase, pattern="^(confirm_purchase|cancel)$"),
+                CallbackQueryHandler(verify_payment_callback, pattern="^(verify_payment|cancel)$"),
             ],
         },
         fallbacks=[CommandHandler("start", start)],
@@ -545,7 +665,7 @@ def main():
     application.add_handler(CommandHandler("status", show_status))
     application.add_handler(CommandHandler("link", get_link))
 
-    # هندلر تمدید
+    # هندلر تمدید (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link$"))
 
