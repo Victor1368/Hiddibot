@@ -37,6 +37,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 HIDIFY_PANEL_URL = os.getenv("HIDIFY_PANEL_URL")
 HIDIFY_API_KEY = os.getenv("HIDIFY_API_KEY")
 HIDIFY_PROXY_PATH = os.getenv("HIDIFY_PROXY_PATH")
+USER_PROXY_PATH = os.getenv("USER_PROXY_PATH", HIDIFY_PROXY_PATH)
 PAYMENT_GATEWAY = os.getenv("PAYMENT_GATEWAY", "zarinpal")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 CARD_NUMBER = os.getenv("CARD_NUMBER", "")
@@ -601,10 +602,9 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ساخت لینک اشتراک
+    # ساخت لینک اشتراک با پروکسی پچ کاربر
     user_uuid = user_data.get("hidify_uuid", "")
-    proxy_path = HIDIFY_PROXY_PATH
-    subscription_url = f"{HIDIFY_PANEL_URL}/{proxy_path}/{user_uuid}/"
+    subscription_url = f"{HIDIFY_PANEL_URL}/{USER_PROXY_PATH}/{user_uuid}/"
 
     text = f"""
 🔗 **لینک اشتراک شما:**
