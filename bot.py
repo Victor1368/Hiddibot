@@ -447,16 +447,42 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    logger.info(f"Sending admin notification to ADMIN_ID={ADMIN_ID} for user {user.id}")
+
+    if not ADMIN_ID or ADMIN_ID == 0:
+        logger.error("ADMIN_ID is not set or is 0!")
+        await query.edit_message_text(
+            f"✅ **رسید پرداخت ثبت شد!**\n\n"
+            f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+            f"💰 مبلغ: {price_formatted} تومان\n"
+            f"🔢 شماره پیگیری: {tracking_code}\n\n"
+            f"⚠️ ادمین هنوز تنظیم نشده. با پشتیبانی تماس بگیرید.",
+            parse_mode="Markdown",
+        )
+        return CHOOSING
+
     try:
-        if ADMIN_ID:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=admin_text,
-                reply_markup=reply_markup,
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=admin_text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+        logger.info(f"Admin notification sent successfully to {ADMIN_ID}")
+    except Exception as e:
+        logger.error(f"Error sending to admin {ADMIN_ID}: {e}")
+        # تلاش برای ارسال پیام خطا به کاربر
+        try:
+            await query.edit_message_text(
+                f"✅ **رسید پرداخت ثبت شد!**\n\n"
+                f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+                f"💰 مبلغ: {price_formatted} تومان\n"
+                f"🔢 شماره پیگیری: {tracking_code}\n\n"
+                f"⚠️ خطا در ارسال به ادمین. با پشتیبانی تماس بگیرید.",
                 parse_mode="Markdown",
             )
-    except Exception as e:
-        logger.error(f"Error sending to admin: {e}")
+        except:
+            pass
 
     # پیام به کاربر
     await query.edit_message_text(
@@ -1046,6 +1072,24 @@ async def admin_reject_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"Error sending message to user: {e}")
 
 
+async def admin_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تست اتصال ادمین"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    await update.message.reply_text(
+        f"✅ **اتصال ادمین فعال است!**\n\n"
+        f"🆔 آیدی عددی شما: `{user.id}`\n"
+        f"👤 نام: {user.first_name}\n"
+        f"💬 یوزرنیم: @{user.username or 'ندارد'}\n\n"
+        f"از این به بعد رسیدهای پرداخت کارت به کارت به اینجا ارسال میشود.",
+        parse_mode="Markdown",
+    )
+
+
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """آمار ربات برای ادمین"""
     user = update.effective_user
@@ -1141,6 +1185,7 @@ def main():
     application.add_handler(CommandHandler("status", show_status))
     application.add_handler(CommandHandler("link", get_link))
     application.add_handler(CommandHandler("admin_stats", admin_stats))
+    application.add_handler(CommandHandler("admin_test", admin_test))
 
     # هندلر تمدید (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
