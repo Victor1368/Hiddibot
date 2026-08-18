@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-import httpx
+from hidify import HidifyClient
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -35,6 +35,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 HIDIFY_PANEL_URL = os.getenv("HIDIFY_PANEL_URL")
 HIDIFY_API_KEY = os.getenv("HIDIFY_API_KEY")
+HIDIFY_PROXY_PATH = os.getenv("HIDIFY_PROXY_PATH")
 
 # ─── تنظیم لاگینگ ───
 logging.basicConfig(
@@ -89,101 +90,10 @@ PLANS = {
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# ماژول اتصال به Hidify
+# ساخت نمونه کلاینت Hidify
 # ═══════════════════════════════════════════════════════════════════════
 
-class HidifyClient:
-    """کلاینت اتصال به پنل Hidify"""
-
-    def __init__(self, panel_url: str, api_key: str):
-        self.panel_url = panel_url.rstrip("/")
-        self.api_key = api_key
-        self.headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
-    async def _request(self, method: str, endpoint: str, data: dict = None) -> dict:
-        """ارسال درخواست به API"""
-        url = f"{self.panel_url}{endpoint}"
-        async with httpx.AsyncClient(verify=False) as client:
-            try:
-                if method == "GET":
-                    response = await client.get(url, headers=self.headers, params=data)
-                elif method == "POST":
-                    response = await client.post(url, headers=self.headers, json=data)
-                elif method == "PUT":
-                    response = await client.put(url, headers=self.headers, json=data)
-                elif method == "DELETE":
-                    response = await client.delete(url, headers=self.headers)
-                else:
-                    return {"error": "Invalid method"}
-
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Hidify API error: {e.response.status_code} - {e.response.text}")
-                return {"error": str(e)}
-            except Exception as e:
-                logger.error(f"Hidify connection error: {e}")
-                return {"error": str(e)}
-
-    async def get_users(self) -> list:
-        """دریافت لیست کاربران"""
-        return await self._request("GET", "/api/user/")
-
-    async def get_user(self, username: str) -> dict:
-        """دریافت اطلاعات یک کاربر"""
-        return await self._request("GET", f"/api/user/{username}")
-
-    async def create_user(self, username: str, data_limit: int, expire: int) -> dict:
-        """
-        ساخت کاربر جدید
-        data_limit: حجم به بایت (0 = نامحدود)
-        expire: تاریخ انقضا به ثانیه (timestamp)
-        """
-        payload = {
-            "username": username,
-            "data_limit": data_limit * 1024 * 1024 * 1024 if data_limit > 0 else 0,  # GB to Bytes
-            "expire": expire,
-            "note": f"Created via Telegram Bot - {datetime.now().isoformat()}",
-        }
-        return await self._request("POST", "/api/user/", payload)
-
-    async def update_user(self, username: str, data_limit: int = None, expire: int = None) -> dict:
-        """بروزرسانی اطلاعات کاربر"""
-        payload = {}
-        if data_limit is not None:
-            payload["data_limit"] = data_limit * 1024 * 1024 * 1024 if data_limit > 0 else 0
-        if expire is not None:
-            payload["expire"] = expire
-        return await self._request("PUT", f"/api/user/{username}", payload)
-
-    async def delete_user(self, username: str) -> dict:
-        """حذف کاربر"""
-        return await self._request("DELETE", f"/api/user/{username}")
-
-    async def get_user_subscription(self, username: str) -> str:
-        """دریافت لینک اشتراک کاربر"""
-        result = await self._request("GET", f"/api/user/{username}/subscription")
-        if "subscription_url" in result:
-            return result["subscription_url"]
-        return None
-
-    async def get_user_tokens(self, username: str) -> list:
-        """دریافت توکن‌های اتصال کاربر"""
-        result = await self._request("GET", f"/api/user/{username}/token")
-        if isinstance(result, list):
-            return result
-        return []
-
-    async def get_inbounds(self) -> list:
-        """دریافت لیست inbound‌های موجود"""
-        return await self._request("GET", "/api/inbound/")
-
-
-# ساخت نمونه کلاینت
-hidify = HidifyClient(HIDIFY_PANEL_URL, HIDIFY_API_KEY)
+hidify = HidifyClient(HIDIFY_PANEL_URL, HIDIFY_API_KEY, HIDIFY_PROXY_PATH)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -343,25 +253,27 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = f"tg_{user.id}"
 
-    # محاسبه تاریخ انقضا
-    expire_time = int((datetime.now() + timedelta(days=plan["duration"])).timestamp())
-
     # ساخت کاربر در Hidify
     await query.edit_message_text("⏳ در حال ساخت اشتراک...")
-    result = await hidify.create_user(username, plan["data_limit"], expire_time)
+    result = await hidify.create_user(
+        name=username,
+        usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
+        package_days=plan["duration"],
+        enable=True
+    )
 
     if "error" in result:
         await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error']}")
         return CHOOSING
 
     # ذخیره اطلاعات کاربر
+    user_uuid = result.get("uuid", "")
     user_data = {
         "telegram_id": user.id,
         "username": username,
-        "hidify_username": username,
+        "hidify_uuid": user_uuid,
         "plan": plan_id,
         "created_at": datetime.now().isoformat(),
-        "expire_at": expire_time,
         "data_limit": plan["data_limit"],
     }
     save_user_data(user.id, user_data)
@@ -392,15 +304,16 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # دریافت اطلاعات از Hidify
-    hidify_user = await hidify.get_user(user_data.get("hidify_username", ""))
+    user_uuid = user_data.get("hidify_uuid", "")
+    hidify_user = await hidify.get_user(user_uuid)
 
     if "error" in hidify_user:
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات:\n{hidify_user['error']}")
         return
 
     # محاسبه حجم مصرفی
-    used_data = hidify_user.get("used_traffic", 0)
-    used_gb = round(used_data / (1024 * 1024 * 1024), 2)
+    used_data = hidify_user.get("current_usage_GB", 0)
+    used_gb = round(used_data, 2)
 
     data_limit = user_data.get("data_limit", 0)
     if data_limit > 0:
@@ -409,16 +322,6 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data_text += f"📊 حجم باقیمانده: {remaining_gb} گیگ\n"
     else:
         data_text = f"📊 حجم مصرفی: {used_gb} گیگ (نامحدود)\n"
-
-    # تاریخ انقضا
-    expire_at = hidify_user.get("expire", 0)
-    if expire_at:
-        expire_date = datetime.fromtimestamp(expire_at)
-        days_left = (expire_date - datetime.now()).days
-        expire_text = f"⏰ تاریخ انقضا: {expire_date.strftime('%Y/%m/%d')}\n"
-        expire_text += f"⏰ روزهای باقیمانده: {days_left} روز\n"
-    else:
-        expire_text = "⏰ تاریخ انقضا: نامحدود\n"
 
     # وضعیت
     is_active = hidify_user.get("is_active", False)
@@ -432,7 +335,7 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 {status_text}
 📋 پلن: {plan_name}
-{data_text}{expire_text}
+{data_text}
 """
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -449,14 +352,10 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # دریافت لینک اشتراک
-    subscription_url = await hidify.get_user_subscription(
-        user_data.get("hidify_username", "")
-    )
-
-    if not subscription_url:
-        await update.message.reply_text("❌ خطا در دریافت لینک اشتراک!")
-        return
+    # ساخت لینک اشتراک
+    user_uuid = user_data.get("hidify_uuid", "")
+    proxy_path = HIDIFY_PROXY_PATH
+    subscription_url = f"{HIDIFY_PANEL_URL}/{proxy_path}/{user_uuid}/"
 
     text = f"""
 🔗 **لینک اشتراک شما:**
@@ -552,10 +451,11 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_expire = current_expire + (plan["duration"] * 86400)
 
     # بروزرسانی در Hidify
+    user_uuid = user_data.get("hidify_uuid", "")
     result = await hidify.update_user(
-        user_data.get("hidify_username", ""),
-        plan["data_limit"],
-        new_expire,
+        user_uuid,
+        usage_limit_GB=plan["data_limit"] if plan["data_limit"] > 0 else None,
+        package_days=plan["duration"]
     )
 
     if "error" in result:
@@ -653,9 +553,9 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # اجرا
-    logger.info("🚀 ربات شروع به کار کرد!")
-    print("🚀 ربات تلگرام VPN در حال اجرا...")
-    print("برای توقف، Ctrl+C را بزنید.")
+    logger.info("Bot started successfully!")
+    print("Bot is running...")
+    print("Press Ctrl+C to stop.")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
