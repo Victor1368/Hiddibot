@@ -1703,7 +1703,10 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ شما ادمین نیستید!")
+        if update.callback_query:
+            await update.callback_query.answer("❌ شما ادمین نیستید!", show_alert=True)
+        else:
+            await update.message.reply_text("❌ شما ادمین نیستید!")
         return
 
     # دریافت آمار از دیتابیس
@@ -1750,7 +1753,12 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🔒 **پشتیبان‌ها:** {total_backups} عدد
 """
-    await update.message.reply_text(text, parse_mode="Markdown")
+
+    # ارسال پاسخ (چه از دکمه چه از دستور)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ═══════════════════════════════════════════════════════════════════════
