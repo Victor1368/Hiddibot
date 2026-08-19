@@ -17,6 +17,8 @@ from admin_manager import (
     load_cards, add_card, update_card, delete_card, get_active_card, get_all_cards,
     load_plans, add_plan, update_plan, delete_plan, get_active_plans, get_all_plans, get_plan,
 )
+from database import db
+from backup import BackupManager, AutoBackupScheduler
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -96,23 +98,36 @@ hidify = HidifyClient(HIDIFY_PANEL_URL, HIDIFY_API_KEY, HIDIFY_PROXY_PATH)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# مدیریت اطلاعات کاربران ربات
+# مدیریت اطلاعات کاربران ربات (دیتابیس)
 # ═══════════════════════════════════════════════════════════════════════
 
 def get_user_data(telegram_user_id: int) -> dict:
-    """دریافت اطلاعات کاربر از فایل"""
-    user_file = DATA_DIR / f"{telegram_user_id}.json"
-    if user_file.exists():
-        with open(user_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+    """دریافت اطلاعات کاربر از دیتابیس"""
+    user = db.get_user(telegram_user_id)
+    if user:
+        # تبدیل به فرمت قدیمی برای سازگاری
+        return {
+            "telegram_id": user.get("telegram_id"),
+            "username": user.get("username"),
+            "hidify_uuid": user.get("hidify_uuid"),
+            "plan": user.get("plan_id"),
+            "data_limit": user.get("data_limit", 0),
+            "expire_at": user.get("expire_at"),
+            "created_at": user.get("created_at"),
+        }
     return {}
 
 
 def save_user_data(telegram_user_id: int, data: dict):
-    """ذخیره اطلاعات کاربر در فایل"""
-    user_file = DATA_DIR / f"{telegram_user_id}.json"
-    with open(user_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """ذخیره اطلاعات کاربر در دیتابیس"""
+    db.save_user(
+        telegram_id=telegram_user_id,
+        username=data.get("username", f"tg_{telegram_user_id}"),
+        hidify_uuid=data.get("hidify_uuid", ""),
+        plan_id=data.get("plan", ""),
+        data_limit=data.get("data_limit", 0),
+        expire_at=data.get("expire_at"),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -480,20 +495,17 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
     # ذخیره تراکنش کارت به کارت
-    from payment import load_transactions, save_transactions
     order_id = f"card_{user.id}_{int(datetime.now().timestamp())}"
-    transactions = load_transactions()
-    transactions[order_id] = {
-        "user_id": user.id,
-        "username": user.username or user.first_name,
-        "plan_name": plan.get("name", "نامشخص"),
-        "amount": plan.get("price", 0),
-        "gateway": "card_to_card",
-        "tracking_code": tracking_code,
-        "status": "pending",
-        "created_at": datetime.now().isoformat(),
-    }
-    save_transactions(transactions)
+    db.save_transaction(
+        order_id=order_id,
+        user_id=user.id,
+        username=user.username or user.first_name,
+        plan_name=plan.get("name", "نامشخص"),
+        amount=plan.get("price", 0),
+        gateway="card_to_card",
+        tracking_code=tracking_code,
+        status="pending",
+    )
 
     # ارسال پیام به ادمین
     admin_text = f"""
@@ -955,12 +967,11 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
 
     # بروزرسانی تراکنش
     try:
-        from payment import load_transactions, save_transactions
-        transactions = load_transactions()
-        if order_id in transactions:
-            transactions[order_id]["status"] = "completed"
-            transactions[order_id]["ref_id"] = verify_result.get("ref_id") or verify_result.get("track_id")
-            save_transactions(transactions)
+        db.update_transaction(
+            order_id=order_id,
+            status="completed",
+            ref_id=verify_result.get("ref_id") or verify_result.get("track_id"),
+        )
     except Exception as e:
         logger.error(f"Error updating transaction: {e}")
         # ادامه بده حتی اگه تراکنش آپدیت نشد
@@ -1085,12 +1096,11 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
 
     # بروزرسانی تراکنش
     try:
-        from payment import load_transactions, save_transactions
-        transactions = load_transactions()
-        for tid, trans in transactions.items():
-            if trans.get("user_id") == user_id and trans.get("status") == "pending":
-                transactions[tid]["status"] = "completed"
-                save_transactions(transactions)
+        # پیدا کردن تراکنش در انتظار کاربر
+        pending = db.get_pending_transactions()
+        for trans in pending:
+            if trans.get("user_id") == user_id:
+                db.update_transaction(trans["order_id"], "completed")
                 break
     except Exception as e:
         logger.error(f"Error updating transaction: {e}")
@@ -1136,12 +1146,11 @@ async def admin_reject_payment(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # بروزرسانی تراکنش
     try:
-        from payment import load_transactions, save_transactions
-        transactions = load_transactions()
-        for tid, trans in transactions.items():
-            if trans.get("user_id") == user_id and trans.get("status") == "pending":
-                transactions[tid]["status"] = "rejected"
-                save_transactions(transactions)
+        # پیدا کردن تراکنش در انتظار کاربر
+        pending = db.get_pending_transactions()
+        for trans in pending:
+            if trans.get("user_id") == user_id:
+                db.update_transaction(trans["order_id"], "rejected")
                 break
     except Exception as e:
         logger.error(f"Error updating transaction: {e}")
@@ -1652,19 +1661,14 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ شما ادمین نیستید!")
         return
 
-    # شمارش کاربران
-    user_files = list(DATA_DIR.glob("*.json"))
-    total_users = len(user_files)
-
-    # شمارش تراکنش‌ها
-    try:
-        from payment import load_transactions
-        transactions = load_transactions()
-        pending = sum(1 for t in transactions.values() if t.get("status") == "pending")
-        completed = sum(1 for t in transactions.values() if t.get("status") == "completed")
-        rejected = sum(1 for t in transactions.values() if t.get("status") == "rejected")
-    except:
-        pending = completed = rejected = 0
+    # دریافت آمار از دیتابیس
+    stats = db.get_stats()
+    total_users = stats.get("total_users", 0)
+    pending = stats.get("pending_transactions", 0)
+    completed = stats.get("completed_transactions", 0)
+    rejected = stats.get("rejected_transactions", 0)
+    total_revenue = stats.get("total_revenue", 0)
+    total_backups = stats.get("total_backups", 0)
 
     # دریافت اطلاعات Hidify
     try:
@@ -1682,6 +1686,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         active_plans = active_cards = 0
 
+    revenue_formatted = f"{total_revenue:,}".replace(",", "،")
     text = f"""
 📊 **آمار ربات**
 
@@ -1695,8 +1700,103 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • ⏳ در انتظار: {pending}
 • ✅ تایید شده: {completed}
 • ❌ رد شده: {rejected}
+
+💵 **درآمد کل:** {revenue_formatted} تومان
+
+🔒 **پشتیبان‌ها:** {total_backups} عدد
 """
     await update.message.reply_text(text, parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# دستورات پشتیبان‌گیری
+# ═══════════════════════════════════════════════════════════════════════
+
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور پشتیبان‌گیری دستی"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    await update.message.reply_text("⏳ در حال ایجاد پشتیبان...")
+
+    backup_mgr = BackupManager()
+    result = backup_mgr.create_backup()
+
+    if result.get("success"):
+        backup_size = result["size"]
+        backup_file = result["filename"]
+
+        # ارسال فایل پشتیبان
+        with open(result["file"], "rb") as f:
+            await context.bot.send_document(
+                chat_id=user.id,
+                document=f,
+                caption=f"🔒 **پشتیبان موفق!**\n\n"
+                        f"📁 فایل: {backup_file}\n"
+                        f"📊 حجم: {backup_size:,} بایت\n"
+                        f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"برای بازیابی، فایل را ذخیره کرده و دستور /restore استفاده کنید.",
+                parse_mode="Markdown",
+            )
+    else:
+        await update.message.reply_text(
+            f"❌ خطا در ایجاد پشتیبان:\n{result.get('error', 'نامشخص')}"
+        )
+
+
+async def backups_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لیست پشتیبان‌ها"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    backup_mgr = BackupManager()
+    backups = backup_mgr.list_backups()
+
+    if not backups:
+        await update.message.reply_text("📋 هنوز پشتیبانی ایجاد نشده است.")
+        return
+
+    text = "📋 **لیست پشتیبان‌ها:**\n\n"
+    for i, backup in enumerate(backups[:10], 1):
+        size = backup["size"]
+        created = backup["created"][:19]
+        text += f"{i}. 📁 {backup['filename']}\n"
+        text += f"   📊 {size:,} بایت\n"
+        text += f"   📅 {created}\n\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def migrate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مهاجرت از JSON به دیتابیس"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    await update.message.reply_text("⏳ در حال مهاجرت اطلاعات...")
+
+    result = db.migrate_from_json()
+
+    if result.get("success"):
+        migrated = result.get("migrated", 0)
+        await update.message.reply_text(
+            f"✅ **مهاجرت با موفقیت انجام شد!**\n\n"
+            f"📊 تعداد رکوردهای مهاجرت شده: {migrated}\n\n"
+            f"اطلاعات شما اکنون در دیتابیس ذخیره شده و دیگر پاک نمیشود.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ خطا در مهاجرت:\n{result.get('error', 'نامشخص')}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1791,6 +1891,11 @@ def main():
     application.add_handler(CommandHandler("admin_test", admin_test))
     application.add_handler(CommandHandler("admin_panel", admin_panel))
 
+    # دستورات پشتیبان‌گیری
+    application.add_handler(CommandHandler("backup", backup_command))
+    application.add_handler(CommandHandler("backups", backups_list))
+    application.add_handler(CommandHandler("migrate", migrate_command))
+
     # هندلر تمدید (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link$"))
@@ -1802,10 +1907,22 @@ def main():
     # هندلر پیام‌های متنی
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # راه‌اندازی زمان‌بند پشتیبان‌گیری خودکار (هر 3 ساعت)
+    scheduler = AutoBackupScheduler(bot=application.bot, admin_id=ADMIN_ID, interval_hours=3)
+
     # اجرا
     logger.info("Bot started successfully!")
     print("Bot is running...")
     print("Press Ctrl+C to stop.")
+    print(f"Auto backup scheduler: every {scheduler.interval_hours} hours")
+
+    # شروع پشتیبان‌گیری خودکار پس از راه‌اندازی ربات
+    async def post_init(application):
+        await scheduler.start()
+        logger.info("Auto backup scheduler started")
+
+    application.post_init = post_init
+
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
