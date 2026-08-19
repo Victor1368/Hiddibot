@@ -534,11 +534,16 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         # بررسی آیا عکس رسید ارسال شده
         receipt_photo = context.user_data.get("receipt_photo")
         if receipt_photo:
-            # ارسال عکس رسید به ادمین
+            # ارسال عکس رسید به ادمین (بدون caption پیچیده)
             await context.bot.send_photo(
                 chat_id=ADMIN_ID,
                 photo=receipt_photo,
-                caption=admin_text,
+                caption=f"📷 رسید پرداخت از {user.first_name}",
+            )
+            # ارسال متن + دکمه‌ها به صورت جداگانه
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=admin_text,
                 reply_markup=reply_markup,
                 parse_mode="Markdown",
             )
