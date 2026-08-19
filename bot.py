@@ -340,7 +340,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 """
 
     keyboard = [
-        [InlineKeyboardButton("💳 درگاه آنلاین", callback_data="pay_online")],
+        [InlineKeyboardButton("💳 درگاه آنلاین (بزودی)", callback_data="coming_soon")],
         [InlineKeyboardButton("💵 کارت به کارت", callback_data="pay_card")],
         [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
@@ -363,7 +363,12 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     plan = plans.get(plan_id, {})
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
-    if query.data == "pay_online":
+    if query.data == "coming_soon":
+        # درگاه آنلاین بزودی
+        await query.answer("⏳ این قابلیت بزودی اضافه خواهد شد!", show_alert=True)
+        return SELECTING_PAYMENT
+
+    elif query.data == "pay_online":
         # پرداخت آنلاین
         return await confirm_purchase(update, context)
 
@@ -1852,6 +1857,67 @@ async def migrate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """خروجی گرفتن از دیتابیس"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    await update.message.reply_text("⏳ در حال خروجی گرفتن از دیتابیس...")
+
+    result = db.export_to_json()
+
+    if result.get("success"):
+        export_dir = result.get("export_dir", "data/export")
+        users = result.get("users", 0)
+        transactions = result.get("transactions", 0)
+        subscriptions = result.get("subscriptions", 0)
+
+        await update.message.reply_text(
+            f"✅ **خروجی با موفقیت ایجاد شد!**\n\n"
+            f"📁 مسیر: `{export_dir}`\n\n"
+            f"📊 آمار:\n"
+            f"• 👥 کاربران: {users}\n"
+            f"• 💰 تراکنش‌ها: {transactions}\n"
+            f"• 📋 اشتراک‌ها: {subscriptions}\n\n"
+            f"⚠️ فایل‌های JSON در پوشه `data/export` ذخیره شدند.\n"
+            f"این فایل‌ها را در جای امنی نگه دارید.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ خطا در خروجی گرفتن:\n{result.get('error', 'نامشخص')}"
+        )
+
+
+async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ورودی گرفتن به دیتابیس"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return
+
+    await update.message.reply_text("⏳ در حال ورودی گرفتن از فایل‌ها...")
+
+    result = db.import_from_json()
+
+    if result.get("success"):
+        imported = result.get("imported", 0)
+        await update.message.reply_text(
+            f"✅ **ورودی با موفقیت انجام شد!**\n\n"
+            f"📊 تعداد رکوردهای وارد شده: {imported}\n\n"
+            f"اطلاعات با موفقیت به دیتابیس اضافه شد.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ خطا در ورودی گرفتن:\n{result.get('error', 'نامشخص')}"
+        )
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # اجرای ربات
 # ═══════════════════════════════════════════════════════════════════════
@@ -1944,10 +2010,12 @@ def main():
     application.add_handler(CommandHandler("admin_test", admin_test))
     application.add_handler(CommandHandler("admin_panel", admin_panel))
 
-    # دستورات پشتیبان‌گیری
+    # دستورات پشتیبان‌گیری و مدیریت داده‌ها
     application.add_handler(CommandHandler("backup", backup_command))
     application.add_handler(CommandHandler("backups", backups_list))
     application.add_handler(CommandHandler("migrate", migrate_command))
+    application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("import", import_command))
 
     # هندلر تمدید (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
@@ -1971,6 +2039,23 @@ def main():
 
     # شروع پشتیبان‌گیری خودکار پس از راه‌اندازی ربات
     async def post_init(application):
+        # مهاجرت خودکار از JSON اگر دیتابیس خالی باشد
+        migration_result = db.auto_migrate_on_startup()
+        if migration_result.get("success") and not migration_result.get("skipped"):
+            migrated = migration_result.get("migrated", 0)
+            logger.info(f"Auto-migration completed: {migrated} records migrated")
+            # ارسال پیام به ادمین
+            if ADMIN_ID and ADMIN_ID > 0:
+                try:
+                    await application.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"🔄 **مهاجرت خودکار انجام شد!**\n\n"
+                             f"📊 تعداد رکوردهای مهاجرت شده: {migrated}",
+                        parse_mode="Markdown",
+                    )
+                except:
+                    pass
+
         await scheduler.start()
         logger.info("Auto backup scheduler started")
 
