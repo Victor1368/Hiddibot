@@ -375,10 +375,12 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
 ⚠️ **نکات مهم:**
 • دقیقاً مبلغ بالا را واریز کنید
-• بعد از واریز، شماره پیگیری را وارد کنید
+• بعد از واریز، رسید پرداخت را ارسال کنید
 • رسید پرداخت برای ادمین ارسال میشود
 
-لطفاً بعد از واریز، شماره پیگیری (۱۰ یا ۱۲ رقمی) را وارد کنید:
+لطفاً بعد از واریز:
+• 📝 **شماره پیگیری** را وارد کنید
+• یا 📷 **اسکرین‌شات رسید** را ارسال کنید:
 """
         await query.edit_message_text(text, parse_mode="Markdown")
         return ENTERING_TRACKING_CODE
@@ -411,6 +413,41 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 📋 پلن: {plan.get('name', 'نامشخص')}
 💰 مبلغ: {price_formatted} تومان
 🔢 شماره پیگیری: {tracking_code}
+
+آیا اطلاعات صحیح است؟
+"""
+    keyboard = [
+        [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return CONFIRMING_PURCHASE
+
+
+async def enter_tracking_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت عکس رسید پرداخت"""
+    user = update.effective_user
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    # دریافت file_id عکس
+    photo = update.message.photo[-1]  # بزرگترین سایز
+    file_id = photo.file_id
+
+    # ذخیره اطلاعات
+    context.user_data["tracking_code"] = "اسکرین‌شات رسید"
+    context.user_data["receipt_photo"] = file_id
+
+    # تایید اطلاعات
+    text = f"""
+✅ **تایید پرداخت کارت به کارت**
+
+📋 پلن: {plan.get('name', 'نامشخص')}
+💰 مبلغ: {price_formatted} تومان
+📷 رسید: اسکرین‌شات ارسال شد
 
 آیا اطلاعات صحیح است؟
 """
@@ -494,12 +531,25 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         return CHOOSING
 
     try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=admin_text,
-            reply_markup=reply_markup,
-            parse_mode="Markdown",
-        )
+        # بررسی آیا عکس رسید ارسال شده
+        receipt_photo = context.user_data.get("receipt_photo")
+        if receipt_photo:
+            # ارسال عکس رسید به ادمین
+            await context.bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=receipt_photo,
+                caption=admin_text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+        else:
+            # ارسال متن به ادمین
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=admin_text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
         logger.info(f"Admin notification sent successfully to {ADMIN_ID}")
     except Exception as e:
         logger.error(f"Error sending to admin {ADMIN_ID}: {e}")
@@ -1685,6 +1735,7 @@ def main():
             ],
             ENTERING_TRACKING_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
+                MessageHandler(filters.PHOTO, enter_tracking_photo),
             ],
             # وضعیت‌های مدیریت ادمین
             ADMIN_MENU: [
