@@ -668,93 +668,103 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """نمایش وضعیت اشتراک"""
+    """نمایش وضعیت تمام اشتراک‌ها"""
     user = update.effective_user
-    user_data = get_user_data(user.id)
+    subscriptions = db.get_user_subscriptions(user.id)
 
-    if not user_data:
+    if not subscriptions:
         await update.message.reply_text(
             "❌ شما هنوز اشتراکی ندارید!\n\n"
             "برای خرید اشتراک، روی «🛒 خرید اشتراک» کلیک کنید."
         )
         return
 
-    # دریافت اطلاعات از Hidify
-    user_uuid = user_data.get("hidify_uuid", "")
-    hidify_user = hidify.get_user(user_uuid)
+    text = "📊 **وضعیت اشتراک‌های شما:**\n\n"
 
-    if "error" in hidify_user:
-        await update.message.reply_text(f"❌ خطا در دریافت اطلاعات:\n{hidify_user['error']}")
-        return
+    for i, sub in enumerate(subscriptions, 1):
+        status = sub.get("status", "unknown")
+        if status == "active":
+            status_icon = "🟢 فعال"
+        elif status == "expired":
+            status_icon = "🔴 منقضی"
+        else:
+            status_icon = "⚪ لغو شده"
 
-    # محاسبه حجم مصرفی
-    used_data = hidify_user.get("current_usage_GB", 0)
-    used_gb = round(used_data, 2)
+        plan_name = sub.get("plan_name", "نامشخص")
+        data_limit = sub.get("data_limit", 0)
+        data_used = sub.get("data_used", 0)
+        start_date = sub.get("start_date", "نامشخص")
+        expire_date = sub.get("expire_date", "نامشخص")
 
-    data_limit = user_data.get("data_limit", 0)
-    if data_limit > 0:
-        remaining_gb = round(data_limit - used_gb, 2)
-        data_text = f"📊 حجم مصرفی: {used_gb} گیگ از {data_limit} گیگ\n"
-        data_text += f"📊 حجم باقیمانده: {remaining_gb} گیگ\n"
-    else:
-        data_text = f"📊 حجم مصرفی: {used_gb} گیگ (نامحدود)\n"
+        # نمایش حجم
+        if data_limit > 0:
+            remaining = round(data_limit - data_used, 2)
+            data_text = f"📊 حجم: {data_used} از {data_limit} گیگ (باقیمانده: {remaining} گیگ)"
+        else:
+            data_text = f"📊 حجم: {data_used} گیگ (نامحدود)"
 
-    # وضعیت
-    is_active = hidify_user.get("is_active", False)
-    status_text = "🟢 وضعیت: فعال\n" if is_active else "🔴 وضعیت: غیرفعال\n"
+        # نمایش تاریخ شروع و انقضا
+        try:
+            start_fmt = datetime.fromisoformat(start_date).strftime("%Y/%m/%d")
+        except:
+            start_fmt = start_date[:10] if start_date else "نامشخص"
+        try:
+            expire_fmt = datetime.fromisoformat(expire_date).strftime("%Y/%m/%d")
+        except:
+            expire_fmt = expire_date[:10] if expire_date else "نامشخص"
 
-    plans = get_plans()
-    plan = plans.get(user_data.get("plan", ""), {})
-    plan_name = plan.get("name", "نامشخص")
+        text += f"**{i}. {plan_name}** - {status_icon}\n"
+        text += f"   {data_text}\n"
+        text += f"   📅 شروع: {start_fmt} | انقضا: {expire_fmt}\n\n"
 
-    text = f"""
-📊 **وضعیت اشتراک شما**
+    # وضعیت کلی از Hidify
+    user_data = get_user_data(user.id)
+    if user_data:
+        user_uuid = user_data.get("hidify_uuid", "")
+        hidify_user = hidify.get_user(user_uuid)
+        if "error" not in hidify_user:
+            is_active = hidify_user.get("is_active", False)
+            used_gb = round(hidify_user.get("current_usage_GB", 0), 2)
+            text += f"---\n"
+            text += f"🌐 **وضعیت سرور:** {'🟢 فعال' if is_active else '🔴 غیرفعال'}\n"
+            text += f"📊 **حجم کل مصرفی:** {used_gb} گیگ\n"
 
-{status_text}
-📋 پلن: {plan_name}
-{data_text}
-"""
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دریافت لینک اشتراک"""
+    """دریافت لینک اشتراک‌ها"""
     user = update.effective_user
-    user_data = get_user_data(user.id)
+    subscriptions = db.get_user_subscriptions(user.id)
 
-    if not user_data:
+    if not subscriptions:
         await update.message.reply_text(
             "❌ شما هنوز اشتراکی ندارید!\n\n"
             "برای خرید اشتراک، روی «🛒 خرید اشتراک» کلیک کنید."
         )
         return
 
-    # ساخت لینک اشتراک با پروکسی پچ کاربر
-    user_uuid = user_data.get("hidify_uuid", "")
-    subscription_url = f"{HIDIFY_PANEL_URL}/{USER_PROXY_PATH}/{user_uuid}/"
+    text = "🔗 **لینک اشتراک‌های شما:**\n\n"
 
-    text = f"""
-🔗 **لینک اشتراک شما:**
+    for i, sub in enumerate(subscriptions, 1):
+        uuid = sub.get("hidify_uuid", "")
+        plan_name = sub.get("plan_name", "نامشخص")
+        status = sub.get("status", "unknown")
 
-`{subscription_url}`
+        if not uuid:
+            continue
 
-⚠️ **نکات مهم:**
-• این لینک را با کسی به اشتراک نگذارید
-• برای اتصال، این لینک را در اپلیکیشن VPN کپی کنید
-• در صورت مشکل، لینک را مجدداً دریافت کنید
-"""
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📋 کپی لینک",
-                callback_data="copy_link",
-            )
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        text, reply_markup=reply_markup, parse_mode="Markdown"
-    )
+        subscription_url = f"{HIDIFY_PANEL_URL}/{USER_PROXY_PATH}/{uuid}/"
+        status_icon = "🟢" if status == "active" else "🔴"
+
+        text += f"**{i}. {status_icon} {plan_name}**\n"
+        text += f"`{subscription_url}`\n\n"
+
+    text += "⚠️ **نکات مهم:**\n"
+    text += "• این لینک‌ها را با کسی به اشتراک نگذارید\n"
+    text += "• برای اتصال، لینک را در اپلیکیشن VPN کپی کنید\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -845,6 +855,17 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data["expire_at"] = new_expire
     user_data["data_limit"] = plan["data_limit"]
     save_user_data(user.id, user_data)
+
+    # ذخیره اشتراک جدید در دیتابیس
+    db.save_subscription(
+        telegram_id=user.id,
+        hidify_uuid=user_uuid,
+        plan_id=plan_id,
+        plan_name=plan["name"],
+        data_limit=plan["data_limit"],
+        duration=plan["duration"],
+        status="active",
+    )
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
     await query.edit_message_text(
@@ -1092,7 +1113,7 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(f"❌ خطا در ساخت اشتراک:\n{result['error'][:200]}")
         return
 
-    # ذخیره اطلاعات کاربر
+    # ذخیره اطلاعات کاربر و اشتراک
     try:
         user_uuid = result.get("uuid", "")
         user_data = {
@@ -1104,6 +1125,17 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
             "data_limit": plan.get("data_limit", 0),
         }
         save_user_data(user_id, user_data)
+
+        # ذخیره اشتراک جدید در دیتابیس
+        db.save_subscription(
+            telegram_id=user_id,
+            hidify_uuid=user_uuid,
+            plan_id=plan_id,
+            plan_name=plan.get("name", "نامشخص"),
+            data_limit=plan.get("data_limit", 0),
+            duration=plan.get("duration", 30),
+            status="active",
+        )
     except Exception as e:
         logger.error(f"Error saving user data: {e}")
 
