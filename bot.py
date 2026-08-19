@@ -220,7 +220,7 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"plan_{plan_id}",
             )
         ])
-    keyboard.append([InlineKeyboardButton("❌ انصراف", callback_data="cancel")])
+    keyboard.append([InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -366,11 +366,10 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
     """دریافت شماره پیگیری"""
     tracking_code = update.message.text.strip()
 
-    # بررسی شماره پیگیری
-    if not tracking_code.isdigit() or len(tracking_code) < 10:
+    # بررسی اینکه کد خالی نباشد
+    if not tracking_code:
         await update.message.reply_text(
-            "❌ شماره پیگیری نامعتبر است!\n\n"
-            "لطفاً شماره پیگیری ۱۰ یا ۱۲ رقمی را وارد کنید:"
+            "❌ لطفاً شماره پیگیری را وارد کنید:"
         )
         return ENTERING_TRACKING_CODE
 
