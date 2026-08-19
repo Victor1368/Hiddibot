@@ -176,6 +176,30 @@ async def timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به منوی اصلی"""
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    keyboard = [
+        [KeyboardButton("🛒 خرید اشتراک")],
+        [KeyboardButton("🔄 تمدید اشتراک"), KeyboardButton("📊 وضعیت اشتراک")],
+        [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنما")],
+    ]
+    if user.id == ADMIN_ID:
+        keyboard.append([KeyboardButton("🔧 پنل مدیریت")])
+    
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await query.edit_message_text("🏠 منوی اصلی")
+    await context.bot.send_message(
+        chat_id=user.id,
+        text="لطفاً یکی از گزینه‌ها را انتخاب کنید:",
+        reply_markup=reply_markup
+    )
+    return CHOOSING
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور /help - راهنما"""
     help_text = """
@@ -303,7 +327,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [
         [InlineKeyboardButton("💳 درگاه آنلاین", callback_data="pay_online")],
         [InlineKeyboardButton("💵 کارت به کارت", callback_data="pay_card")],
-        [InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -376,7 +400,8 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["tracking_code"] = tracking_code
     user = update.effective_user
     plan_id = context.user_data.get("selected_plan")
-    plan = PLANS.get(plan_id, {})
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
     # تایید اطلاعات
@@ -391,7 +416,7 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 """
     keyboard = [
         [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
-        [InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -688,7 +713,7 @@ async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 callback_data=f"renew_{plan_id}",
             )
         ])
-    keyboard.append([InlineKeyboardButton("❌ انصراف", callback_data="cancel")])
+    keyboard.append([InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -1646,14 +1671,17 @@ def main():
             ],
             SELECTING_PLAN: [
                 CallbackQueryHandler(plan_selected),
+                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
             ],
             CONFIRMING_PURCHASE: [
                 CallbackQueryHandler(select_payment_method, pattern="^(confirm_purchase|cancel)$"),
                 CallbackQueryHandler(verify_payment_callback, pattern="^(verify_payment|cancel)$"),
                 CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
+                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
             ],
             SELECTING_PAYMENT: [
                 CallbackQueryHandler(handle_payment_method),
+                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
             ],
             ENTERING_TRACKING_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
