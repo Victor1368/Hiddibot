@@ -948,9 +948,11 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
             pass
         return CHOOSING
 
-    # ذخیره اطلاعات کاربر
+    # ذخیره اطلاعات کاربر و اشتراک
     try:
         user_uuid = result.get("uuid", "")
+
+        # ذخیره اطلاعات کاربر
         user_data = {
             "telegram_id": user.id,
             "username": username,
@@ -960,7 +962,18 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
             "data_limit": plan["data_limit"],
         }
         save_user_data(user.id, user_data)
-        logger.info(f"User data saved: {user.id} -> {user_uuid}")
+
+        # ذخیره اشتراک جدید
+        db.save_subscription(
+            telegram_id=user.id,
+            hidify_uuid=user_uuid,
+            plan_id=plan_id,
+            plan_name=plan["name"],
+            data_limit=plan["data_limit"],
+            duration=plan["duration"],
+            status="active",
+        )
+        logger.info(f"User data and subscription saved: {user.id} -> {user_uuid}")
     except Exception as e:
         logger.error(f"Error saving user data: {e}")
         # ادامه بده حتی اگه ذخیره نشد

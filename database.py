@@ -7,7 +7,7 @@ import sqlite3
 import json
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,26 @@ class Database:
             )
         """)
 
+        # جدول اشتراک‌ها
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                hidify_uuid TEXT,
+                plan_id TEXT,
+                plan_name TEXT,
+                data_limit REAL DEFAULT 0,
+                data_used REAL DEFAULT 0,
+                duration INTEGER DEFAULT 30,
+                start_date TEXT,
+                expire_date TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+            )
+        """)
+
         # جدول تراکنش‌ها
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
@@ -65,9 +85,11 @@ class Database:
                 tracking_code TEXT,
                 status TEXT DEFAULT 'pending',
                 ref_id TEXT,
+                subscription_id INTEGER,
                 created_at TEXT,
                 updated_at TEXT,
-                FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+                FOREIGN KEY (user_id) REFERENCES users(telegram_id),
+                FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
             )
         """)
 
@@ -185,6 +207,110 @@ class Database:
             return {"success": False, "error": str(e)}
         finally:
             conn.close()
+
+    # ═══════════════════════════════════════════════════════════════
+    # مدیریت اشتراک‌ها
+    # ═══════════════════════════════════════════════════════════════
+
+    def save_subscription(self, telegram_id, hidify_uuid, plan_id, plan_name, data_limit, duration, data_used=0, status="active"):
+        """ذخیره اشتراک جدید"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        expire_date = (datetime.now() + timedelta(days=duration)).isoformat()
+
+        try:
+            cursor.execute("""
+                INSERT INTO subscriptions
+                (telegram_id, hidify_uuid, plan_id, plan_name, data_limit, data_used, duration, start_date, expire_date, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (telegram_id, hidify_uuid, plan_id, plan_name, data_limit, data_used, duration, now, expire_date, status, now, now))
+            conn.commit()
+            subscription_id = cursor.lastrowid
+            logger.info(f"Subscription {subscription_id} saved for user {telegram_id}")
+            return {"success": True, "subscription_id": subscription_id}
+        except Exception as e:
+            logger.error(f"Error saving subscription: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_user_subscriptions(self, telegram_id, status=None):
+        """دریافت اشتراک‌های کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            if status:
+                cursor.execute("""
+                    SELECT * FROM subscriptions
+                    WHERE telegram_id = ? AND status = ?
+                    ORDER BY created_at DESC
+                """, (telegram_id, status))
+            else:
+                cursor.execute("""
+                    SELECT * FROM subscriptions
+                    WHERE telegram_id = ?
+                    ORDER BY created_at DESC
+                """, (telegram_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting subscriptions for user {telegram_id}: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_active_subscription(self, telegram_id):
+        """دریافت اشتراک فعال کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT * FROM subscriptions
+                WHERE telegram_id = ? AND status = 'active'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (telegram_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting active subscription for user {telegram_id}: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def update_subscription(self, subscription_id, **kwargs):
+        """بروزرسانی اشتراک"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+
+        try:
+            updates = []
+            values = []
+            for key, value in kwargs.items():
+                updates.append(f"{key} = ?")
+                values.append(value)
+            updates.append("updated_at = ?")
+            values.append(now)
+            values.append(subscription_id)
+
+            query = f"UPDATE subscriptions SET {', '.join(updates)} WHERE id = ?"
+            cursor.execute(query, values)
+            conn.commit()
+            logger.info(f"Subscription {subscription_id} updated")
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"Error updating subscription {subscription_id}: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    def cancel_subscription(self, subscription_id):
+        """لغو اشتراک"""
+        return self.update_subscription(subscription_id, status="cancelled")
 
     # ═══════════════════════════════════════════════════════════════
     # مدیریت تراکنش‌ها
