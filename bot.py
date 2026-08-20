@@ -223,6 +223,13 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHOOSING
 
 
+async def back_to_select_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به لیست پلن‌ها"""
+    query = update.callback_query
+    await query.answer()
+    return await show_plans(update, context)
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور /help - راهنما"""
     help_text = """
@@ -313,7 +320,7 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("✅ تایید خرید", callback_data="confirm_purchase"),
-            InlineKeyboardButton("❌ انصراف", callback_data="cancel"),
+            InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1996,6 +2003,7 @@ def main():
                 CallbackQueryHandler(verify_payment_callback, pattern="^(verify_payment|cancel)$"),
                 CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
                 CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
+                CallbackQueryHandler(back_to_select_plan, pattern="^back_to_select_plan$"),
             ],
             SELECTING_PAYMENT: [
                 CallbackQueryHandler(handle_payment_method),
