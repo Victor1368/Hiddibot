@@ -2080,12 +2080,11 @@ async def admin_backup_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_document(
                 chat_id=update.effective_user.id,
                 document=f,
-                caption=f"🔒 **پشتیبان موفق!**\n\n"
+                caption=f"🔒 پشتیبان موفق!\n\n"
                         f"📁 فایل: {backup_file}\n"
                         f"📊 حجم: {backup_size:,} بایت\n"
                         f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                        f"برای بازیابی، فایل را ذخیره کرده و از منوی مدیریت گزینه '🔄 بازیابی پشتیبان' را انتخاب کنید.",
-                parse_mode="Markdown",
+                        f"برای بازیابی، فایل را ذخیره کرده و از منوی مدیریت گزینه بازیابی پشتیبان را انتخاب کنید.",
             )
 
         # نمایش پنل مدیریت دوباره
@@ -2100,18 +2099,16 @@ async def admin_backup_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(
             chat_id=update.effective_user.id,
-            text="✅ پشتیبان با موفقیت ایجاد و ارسال شد!\n\n🔧 **پنل مدیریت**",
+            text="✅ پشتیبان با موفقیت ایجاد و ارسال شد!\n\n🔧 پنل مدیریت",
             reply_markup=reply_markup,
-            parse_mode="Markdown",
         )
     else:
         await context.bot.send_message(
             chat_id=update.effective_user.id,
-            text=f"❌ خطا در ایجاد پشتیبان:\n{result.get('error', 'نامشخص')}\n\n🔧 **پنل مدیریت**",
+            text=f"❌ خطا در ایجاد پشتیبان:\n{result.get('error', 'نامشخص')}\n\n🔧 پنل مدیریت",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_menu")],
             ]),
-            parse_mode="Markdown",
         )
 
     return ADMIN_MENU
@@ -2126,22 +2123,20 @@ async def admin_restore_handler(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    text = """
-🔄 **بازیابی پشتیبان**
-
-⚠️ **نکته مهم:**
-• فایل پشتیبان (.db) را ارسال کنید
-• اطلاعات فعلی بازنویسی خواهد شد
-• یک پشتیبان از وضعیت فعلی ایجاد میشود
-
-📎 فایل پشتیبان را ارسال کنید:
-"""
+    text = (
+        "🔄 بازیابی پشتیبان\n\n"
+        "⚠️ نکته مهم:\n"
+        "• فایل پشتیبان (.db) را ارسال کنید\n"
+        "• اطلاعات فعلی بازنویسی خواهد شد\n"
+        "• یک پشتیبان از وضعیت فعلی ایجاد میشود\n\n"
+        "📎 فایل پشتیبان را ارسال کنید:"
+    )
 
     keyboard = [
         [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(text, reply_markup=reply_markup)
     return ADMIN_RESTORE_FILE
 
 
@@ -2162,7 +2157,7 @@ async def handle_restore_file(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not document.file_name.endswith('.db'):
         await update.message.reply_text(
             "❌ فایل نامعتبر است!\n\n"
-            "فقط فایل‌های با پسوند `.db` پذیرفته میشوند."
+            "فقط فایل‌های با پسوند .db پذیرفته میشوند."
         )
         return ADMIN_RESTORE_FILE
 
@@ -2181,16 +2176,14 @@ async def handle_restore_file(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if result.get("success"):
             await update.message.reply_text(
-                f"✅ **بازیابی موفق!**\n\n"
+                f"✅ بازیابی موفق!\n\n"
                 f"📁 فایل بازیابی شده: {document.file_name}\n"
                 f"💾 پشتیبان قبلی: {result.get('pre_restore_backup', 'نامشخص')}\n\n"
-                f"🔄 ربات با تنظیمات جدید شروع به کار کرد.",
-                parse_mode="Markdown",
+                f"🔄 ربات با تنظیمات جدید شروع به کار کرد."
             )
         else:
             await update.message.reply_text(
-                f"❌ خطا در بازیابی:\n{result.get('error', 'نامشخص')}",
-                parse_mode="Markdown",
+                f"❌ خطا در بازیابی:\n{result.get('error', 'نامشخص')}"
             )
 
     except Exception as e:
@@ -2210,9 +2203,8 @@ async def handle_restore_file(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🔧 **پنل مدیریت**",
+        "🔧 پنل مدیریت",
         reply_markup=reply_markup,
-        parse_mode="Markdown",
     )
     return ADMIN_MENU
 
