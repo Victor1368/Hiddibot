@@ -488,6 +488,9 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
+    if query.data == "back_to_confirm_purchase":
+        return await back_to_confirm_purchase(update, context)
+
     if query.data == "cancel":
         await query.edit_message_text("❌ عملیات لغو شد.")
         return CHOOSING
