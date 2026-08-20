@@ -2461,8 +2461,8 @@ def main():
             ENTERING_TRACKING_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
                 MessageHandler(filters.PHOTO, enter_tracking_photo),
+                CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
                 CallbackQueryHandler(back_to_select_payment, pattern="^back_to_select_payment$"),
-                CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
             # وضعیت‌های مدیریت ادمین
             ADMIN_MENU: [
