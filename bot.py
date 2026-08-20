@@ -175,10 +175,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """لغو مکالمه"""
-    await update.message.reply_text(
-        "❌ عملیات لغو شد.\n\n"
-        "برای شروع مجدد، دکمه «🛒 خرید اشتراک» رو بزنید."
-    )
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            "❌ عملیات لغو شد.\n\n"
+            "برای شروع مجدد، دکمه «🛒 خرید اشتراک» رو بزنید."
+        )
+    else:
+        await update.message.reply_text(
+            "❌ عملیات لغو شد.\n\n"
+            "برای شروع مجدد، دکمه «🛒 خرید اشتراک» رو بزنید."
+        )
     return ConversationHandler.END
 
 
@@ -274,6 +282,10 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """انتخاب پلن"""
     query = update.callback_query
     await query.answer()
+
+    # اگر دکمه بازگشت زده شده
+    if query.data == "back_to_menu":
+        return await back_to_menu(update, context)
 
     if query.data == "cancel":
         await query.edit_message_text("❌ عملیات لغو شد.")
@@ -402,7 +414,11 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 • 📝 **شماره پیگیری** را وارد کنید
 • یا 📷 **اسکرین‌شات رسید** را ارسال کنید:
 """
-        await query.edit_message_text(text, parse_mode="Markdown")
+        keyboard = [
+            [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
         return ENTERING_TRACKING_CODE
 
     return SELECTING_PAYMENT
@@ -1988,6 +2004,8 @@ def main():
             ENTERING_TRACKING_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
                 MessageHandler(filters.PHOTO, enter_tracking_photo),
+                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
+                CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
             # وضعیت‌های مدیریت ادمین
             ADMIN_MENU: [
