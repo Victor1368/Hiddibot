@@ -327,8 +327,7 @@ async def back_to_enter_tracking(update: Update, context: ContextTypes.DEFAULT_T
 • رسید پرداخت برای ادمین ارسال میشود
 
 لطفاً بعد از واریز:
-• 📝 **شماره پیگیری** را وارد کنید
-• یا 📷 **اسکرین‌شات رسید** را ارسال کنید:
+• متن 📝 رسید یا اسکرین‌شات 📷 رسید را ارسال کنید
 """
     keyboard = [
         [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_payment"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
@@ -385,11 +384,19 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🛒 **پلن‌های اشتراک:**\n\nلطفاً یکی از پلن‌های زیر را انتخاب کنید:",
-        reply_markup=reply_markup,
-        parse_mode="Markdown",
-    )
+    text = "🛒 **پلن‌های اشتراک:**\n\nلطفاً یکی از پلن‌های زیر را انتخاب کنید:"
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
     return SELECTING_PLAN
 
 
@@ -417,7 +424,7 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
     text = f"""
-📋 **انتخاب پلن:** {plan['name']}
+📋 **پلن انتخاب شده:** {plan['name']}
 
 • حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت
 • مدت: {plan['duration']} روز
@@ -727,7 +734,7 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🔢 شماره پیگیری: {tracking_code}\n\n"
         f"⏳ پرداخت شما در حال بررسی است.\n"
         f"پس از تایید ادمین، اشتراک شما فعال میشود.\n\n"
-        f"💬 پشتیبانی: @admin",
+        f"💬 پشتیبانی: @netup_top",
         parse_mode="Markdown",
     )
     return CHOOSING
