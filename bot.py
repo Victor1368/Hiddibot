@@ -704,21 +704,19 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
     # تایید اطلاعات
-    text = f"""
-✅ **تایید پرداخت کارت به کارت**
-
-📋 پلن: {plan.get('name', 'نامشخص')}
-💰 مبلغ: {price_formatted} تومان
-🔢 شماره پیگیری: {tracking_code}
-
-آیا اطلاعات صحیح است؟
-"""
+    text = (
+        f"✅ تایید پرداخت کارت به کارت\n\n"
+        f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+        f"💰 مبلغ: {price_formatted} تومان\n"
+        f"🔢 شماره پیگیری: {tracking_code}\n\n"
+        f"آیا اطلاعات صحیح است?"
+    )
     keyboard = [
         [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
         [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_enter_tracking"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(text, reply_markup=reply_markup)
     return CONFIRMING_PURCHASE
 
 
@@ -739,21 +737,19 @@ async def enter_tracking_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["receipt_photo"] = file_id
 
     # تایید اطلاعات
-    text = f"""
-✅ **تایید پرداخت کارت به کارت**
-
-📋 پلن: {plan.get('name', 'نامشخص')}
-💰 مبلغ: {price_formatted} تومان
-📷 رسید: اسکرین‌شات ارسال شد
-
-آیا اطلاعات صحیح است؟
-"""
+    text = (
+        f"✅ تایید پرداخت کارت به کارت\n\n"
+        f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+        f"💰 مبلغ: {price_formatted} تومان\n"
+        f"📷 رسید: اسکرین‌شات ارسال شد\n\n"
+        f"آیا اطلاعات صحیح است?"
+    )
     keyboard = [
         [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
         [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_enter_tracking"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(text, reply_markup=reply_markup)
     return CONFIRMING_PURCHASE
 
 
@@ -769,117 +765,109 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
     if query.data != "confirm_card_payment":
         return CONFIRMING_PURCHASE
 
-    user = update.effective_user
-    plan_id = context.user_data.get("selected_plan")
-    plans = get_plans()
-    plan = plans.get(plan_id, {})
-    tracking_code = context.user_data.get("tracking_code", "")
-    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+    try:
+        user = update.effective_user
+        plan_id = context.user_data.get("selected_plan")
+        plans = get_plans()
+        plan = plans.get(plan_id, {})
+        tracking_code = context.user_data.get("tracking_code", "")
+        price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
-    # ذخیره تراکنش کارت به کارت
-    order_id = f"card_{user.id}_{int(datetime.now().timestamp())}"
-    db.save_transaction(
-        order_id=order_id,
-        user_id=user.id,
-        username=user.username or user.first_name,
-        plan_name=plan.get("name", "نامشخص"),
-        amount=plan.get("price", 0),
-        gateway="card_to_card",
-        tracking_code=tracking_code,
-        status="pending",
-        account_name=context.user_data.get("account_name", f"tg_{user.id}"),
-        account_comment=context.user_data.get("account_comment"),
-    )
+        # ذخیره تراکنش کارت به کارت
+        order_id = f"card_{user.id}_{int(datetime.now().timestamp())}"
+        db.save_transaction(
+            order_id=order_id,
+            user_id=user.id,
+            username=user.username or user.first_name,
+            plan_name=plan.get("name", "نامشخص"),
+            amount=plan.get("price", 0),
+            gateway="card_to_card",
+            tracking_code=tracking_code,
+            status="pending",
+            account_name=context.user_data.get("account_name", f"tg_{user.id}"),
+            account_comment=context.user_data.get("account_comment"),
+        )
+
+        logger.info(f"Transaction saved for user {user.id}")
+    except Exception as e:
+        logger.error(f"Error saving transaction: {e}")
+        try:
+            await query.edit_message_text("❌ خطا در ثبت تراکنش. لطفاً دوباره تلاش کنید.")
+        except:
+            pass
+        return CHOOSING
 
     # ارسال پیام به ادمین
     account_name = context.user_data.get("account_name", f"tg_{user.id}")
-    admin_text = f"""
-🔔 **رسید پرداخت جدید**
+    admin_sent = False
 
-👤 **کاربر:** {user.first_name}
-🆔 **آیدی:** `{user.id}`
-💬 **یوزرنیم:** @{user.username or 'ندارد'}
-
-📋 **پلن:** {plan.get('name', 'نامشخص')}
-💰 **مبلغ:** {price_formatted} تومان
-🔢 **شماره پیگیری:** `{tracking_code}`
-📝 **نام اکانت:** {account_name}
-
-⏰ **زمان:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-
-    keyboard = [
-        [InlineKeyboardButton("✅ تایید", callback_data=f"admin_approve_{user.id}_{plan_id}")],
-        [InlineKeyboardButton("❌ رد", callback_data=f"admin_reject_{user.id}")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    logger.info(f"Sending admin notification to ADMIN_ID={ADMIN_ID} for user {user.id}")
-
-    if not ADMIN_ID or ADMIN_ID == 0:
-        logger.error("ADMIN_ID is not set or is 0!")
-        await query.edit_message_text(
-            f"✅ **رسید پرداخت ثبت شد!**\n\n"
-            f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
-            f"💰 مبلغ: {price_formatted} تومان\n"
-            f"🔢 شماره پیگیری: {tracking_code}\n\n"
-            f"⚠️ ادمین هنوز تنظیم نشده. با پشتیبانی تماس بگیرید.",
-            parse_mode="Markdown",
-        )
-        return CHOOSING
-
-    try:
-        # بررسی آیا عکس رسید ارسال شده
-        receipt_photo = context.user_data.get("receipt_photo")
-        if receipt_photo:
-            # ارسال عکس رسید به ادمین (بدون caption پیچیده)
-            await context.bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=receipt_photo,
-                caption=f"📷 رسید پرداخت از {user.first_name}",
-            )
-            # ارسال متن + دکمه‌ها به صورت جداگانه
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=admin_text,
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
-        else:
-            # ارسال متن به ادمین
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=admin_text,
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
-        logger.info(f"Admin notification sent successfully to {ADMIN_ID}")
-    except Exception as e:
-        logger.error(f"Error sending to admin {ADMIN_ID}: {e}")
-        # تلاش برای ارسال پیام خطا به کاربر
+    if ADMIN_ID and ADMIN_ID != 0:
         try:
+            admin_text = (
+                f"🔔 رسید پرداخت جدید\n\n"
+                f"👤 کاربر: {user.first_name}\n"
+                f"🆔 آیدی: {user.id}\n"
+                f"💬 یوزرنیم: @{user.username or 'ندارد'}\n\n"
+                f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+                f"💰 مبلغ: {price_formatted} تومان\n"
+                f"🔢 شماره پیگیری: {tracking_code}\n"
+                f"📝 نام اکانت: {account_name}\n\n"
+                f"⏰ زمان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            keyboard = [
+                [InlineKeyboardButton("✅ تایید", callback_data=f"admin_approve_{user.id}_{plan_id}")],
+                [InlineKeyboardButton("❌ رد", callback_data=f"admin_reject_{user.id}")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            receipt_photo = context.user_data.get("receipt_photo")
+            if receipt_photo:
+                await context.bot.send_photo(
+                    chat_id=ADMIN_ID,
+                    photo=receipt_photo,
+                    caption=f"📷 رسید پرداخت از {user.first_name}",
+                )
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=admin_text,
+                    reply_markup=reply_markup,
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=admin_text,
+                    reply_markup=reply_markup,
+                )
+            admin_sent = True
+            logger.info(f"Admin notification sent to {ADMIN_ID}")
+        except Exception as e:
+            logger.error(f"Error sending to admin: {e}")
+    else:
+        logger.warning("ADMIN_ID not set, skipping admin notification")
+
+    # پاسخ به کاربر
+    try:
+        if admin_sent:
             await query.edit_message_text(
-                f"✅ **رسید پرداخت ثبت شد!**\n\n"
+                f"✅ رسید پرداخت ارسال شد!\n\n"
                 f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
                 f"💰 مبلغ: {price_formatted} تومان\n"
                 f"🔢 شماره پیگیری: {tracking_code}\n\n"
-                f"⚠️ خطا در ارسال به ادمین. با پشتیبانی تماس بگیرید.",
-                parse_mode="Markdown",
+                f"⏳ پرداخت شما در حال بررسی است.\n"
+                f"پس از تایید ادمین، اشتراک شما فعال میشود.\n\n"
+                f"💬 پشتیبانی: @netup_top",
             )
-        except:
-            pass
+        else:
+            await query.edit_message_text(
+                f"✅ رسید پرداخت ثبت شد!\n\n"
+                f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+                f"💰 مبلغ: {price_formatted} تومان\n"
+                f"🔢 شماره پیگیری: {tracking_code}\n\n"
+                f"⚠️ با پشتیبانی تماس بگیرید: @netup_top",
+            )
+    except Exception as e:
+        logger.error(f"Error editing user message: {e}")
 
-    # پیام به کاربر
-    await query.edit_message_text(
-        f"✅ **رسید پرداخت ارسال شد!**\n\n"
-        f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
-        f"💰 مبلغ: {price_formatted} تومان\n"
-        f"🔢 شماره پیگیری: {tracking_code}\n\n"
-        f"⏳ پرداخت شما در حال بررسی است.\n"
-        f"پس از تایید ادمین، اشتراک شما فعال میشود.\n\n"
-        f"💬 پشتیبانی: @netup_top",
-        parse_mode="Markdown",
-    )
     return CHOOSING
 
 
