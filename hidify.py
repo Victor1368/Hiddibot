@@ -68,7 +68,8 @@ class HidifyClient:
         return self._request("GET", f"/admin/user/{uuid}/")
 
     def create_user(self, name: str, usage_limit_gb: float = None,
-                    package_days: int = None, enable: bool = True) -> dict:
+                    package_days: int = None, enable: bool = True,
+                    comment: str = None) -> dict:
         """ساخت کاربر جدید"""
         payload = {
             "name": name,
@@ -79,6 +80,8 @@ class HidifyClient:
             payload["usage_limit_GB"] = usage_limit_gb
         if package_days is not None:
             payload["package_days"] = package_days
+        if comment is not None:
+            payload["comment"] = comment
         return self._request("POST", "/admin/user/", payload)
 
     def update_user(self, uuid: str, **kwargs) -> dict:

@@ -83,6 +83,8 @@ class Database:
                 amount INTEGER,
                 gateway TEXT,
                 tracking_code TEXT,
+                account_name TEXT,
+                account_comment TEXT,
                 status TEXT DEFAULT 'pending',
                 ref_id TEXT,
                 subscription_id INTEGER,
@@ -316,7 +318,7 @@ class Database:
     # مدیریت تراکنش‌ها
     # ═══════════════════════════════════════════════════════════════
 
-    def save_transaction(self, order_id, user_id, username, plan_name, amount, gateway, tracking_code, status="pending"):
+    def save_transaction(self, order_id, user_id, username, plan_name, amount, gateway, tracking_code, status="pending", account_name=None, account_comment=None):
         """ذخیره تراکنش"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -325,9 +327,9 @@ class Database:
         try:
             cursor.execute("""
                 INSERT OR REPLACE INTO transactions
-                (order_id, user_id, username, plan_name, amount, gateway, tracking_code, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (order_id, user_id, username, plan_name, amount, gateway, tracking_code, status, now, now))
+                (order_id, user_id, username, plan_name, amount, gateway, tracking_code, account_name, account_comment, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (order_id, user_id, username, plan_name, amount, gateway, tracking_code, account_name, account_comment, status, now, now))
             conn.commit()
             logger.info(f"Transaction {order_id} saved")
             return {"success": True}
@@ -378,6 +380,23 @@ class Database:
         except Exception as e:
             logger.error(f"Error getting transactions for user {user_id}: {e}")
             return []
+        finally:
+            conn.close()
+
+    def get_transaction_by_order_id(self, order_id):
+        """دریافت تراکنش بر اساس order_id"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT * FROM transactions WHERE order_id = ?
+            """, (order_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting transaction {order_id}: {e}")
+            return None
         finally:
             conn.close()
 
@@ -629,6 +648,198 @@ class Database:
 
         logger.info(f"Migration complete: {migrated} records migrated")
         return {"success": True, "migrated": migrated}
+
+    # ═══════════════════════════════════════════════════════════════
+    # مهاجرت خودکار در شروع
+    # ═══════════════════════════════════════════════════════════════
+
+    def auto_migrate_on_startup(self):
+        """مهاجرت خودکار اگر دیتابیس خالی باشد و فایل‌های JSON وجود داشته باشد"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # بررسی آیا دیتابیس خالی است
+            cursor.execute("SELECT COUNT(*) as count FROM users")
+            user_count = cursor.fetchone()["count"]
+
+            if user_count > 0:
+                logger.info(f"Database has {user_count} users, skipping auto-migration")
+                return {"success": True, "skipped": True, "reason": "database_not_empty"}
+
+            # بررسی وجود فایل‌های JSON
+            data_dir = Path("data")
+            json_files = list(data_dir.glob("*.json"))
+            if not json_files:
+                logger.info("No JSON files found, skipping auto-migration")
+                return {"success": True, "skipped": True, "reason": "no_json_files"}
+
+            # اجرای مهاجرت
+            logger.info(f"Found {len(json_files)} JSON files, starting auto-migration...")
+            result = self.migrate_from_json()
+            logger.info(f"Auto-migration completed: {result.get('migrated', 0)} records migrated")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in auto-migration: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    # ═══════════════════════════════════════════════════════════════
+    # خروجی گرفتن از دیتابیس
+    # ═══════════════════════════════════════════════════════════════
+
+    def export_to_json(self, export_dir=None):
+        """خروجی گرفتن از دیتابیس به فایل‌های JSON"""
+        if export_dir is None:
+            export_dir = Path("data/export")
+        else:
+            export_dir = Path(export_dir)
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # خروجی کاربران
+            users = self.get_all_users()
+            for user in users:
+                user_file = export_dir / f"user_{user['telegram_id']}.json"
+                with open(user_file, "w", encoding="utf-8") as f:
+                    json.dump(user, f, ensure_ascii=False, indent=2)
+
+            # خروجی تراکنش‌ها
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM transactions")
+            transactions = {row["order_id"]: dict(row) for row in cursor.fetchall()}
+            conn.close()
+
+            trans_file = export_dir / "transactions.json"
+            with open(trans_file, "w", encoding="utf-8") as f:
+                json.dump(transactions, f, ensure_ascii=False, indent=2)
+
+            # خروجی اشتراک‌ها
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM subscriptions")
+            subscriptions = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+
+            subs_file = export_dir / "subscriptions.json"
+            with open(subs_file, "w", encoding="utf-8") as f:
+                json.dump(subscriptions, f, ensure_ascii=False, indent=2)
+
+            # خروجی تنظیمات
+            settings = self.get_all_settings()
+            settings_file = export_dir / "settings.json"
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"Export completed to {export_dir}")
+            return {
+                "success": True,
+                "export_dir": str(export_dir),
+                "users": len(users),
+                "transactions": len(transactions),
+                "subscriptions": len(subscriptions),
+            }
+
+        except Exception as e:
+            logger.error(f"Error exporting data: {e}")
+            return {"success": False, "error": str(e)}
+
+    # ═══════════════════════════════════════════════════════════════
+    # ورودی گرفتن به دیتابیس
+    # ═══════════════════════════════════════════════════════════════
+
+    def import_from_json(self, import_dir=None):
+        """ورودی گرفتن از فایل‌های JSON به دیتابیس"""
+        if import_dir is None:
+            import_dir = Path("data/export")
+        else:
+            import_dir = Path(import_dir)
+
+        if not import_dir.exists():
+            return {"success": False, "error": "Import directory not found"}
+
+        imported = 0
+
+        try:
+            # ورودی کاربران
+            for user_file in import_dir.glob("user_*.json"):
+                try:
+                    with open(user_file, "r", encoding="utf-8") as f:
+                        user = json.load(f)
+                    self.save_user(
+                        telegram_id=user.get("telegram_id"),
+                        username=user.get("username", ""),
+                        hidify_uuid=user.get("hidify_uuid", ""),
+                        plan_id=user.get("plan_id", user.get("plan", "")),
+                        data_limit=user.get("data_limit", 0),
+                        expire_at=user.get("expire_at"),
+                    )
+                    imported += 1
+                except Exception as e:
+                    logger.error(f"Error importing {user_file}: {e}")
+
+            # ورودی تراکنش‌ها
+            trans_file = import_dir / "transactions.json"
+            if trans_file.exists():
+                with open(trans_file, "r", encoding="utf-8") as f:
+                    transactions = json.load(f)
+                for order_id, trans in transactions.items():
+                    self.save_transaction(
+                        order_id=order_id,
+                        user_id=trans.get("user_id", 0),
+                        username=trans.get("username", ""),
+                        plan_name=trans.get("plan_name", ""),
+                        amount=trans.get("amount", 0),
+                        gateway=trans.get("gateway", ""),
+                        tracking_code=trans.get("tracking_code", ""),
+                        status=trans.get("status", "pending"),
+                    )
+                    imported += 1
+
+            # ورودی اشتراک‌ها
+            subs_file = import_dir / "subscriptions.json"
+            if subs_file.exists():
+                with open(subs_file, "r", encoding="utf-8") as f:
+                    subscriptions = json.load(f)
+                for sub in subscriptions:
+                    conn = self.get_connection()
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO subscriptions
+                            (telegram_id, hidify_uuid, plan_id, plan_name, data_limit, data_used,
+                             duration, start_date, expire_date, status, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            sub.get("telegram_id"),
+                            sub.get("hidify_uuid", ""),
+                            sub.get("plan_id", ""),
+                            sub.get("plan_name", ""),
+                            sub.get("data_limit", 0),
+                            sub.get("data_used", 0),
+                            sub.get("duration", 30),
+                            sub.get("start_date"),
+                            sub.get("expire_date"),
+                            sub.get("status", "active"),
+                            sub.get("created_at"),
+                            sub.get("updated_at"),
+                        ))
+                        conn.commit()
+                        imported += 1
+                    except Exception as e:
+                        logger.error(f"Error importing subscription: {e}")
+                    finally:
+                        conn.close()
+
+            logger.info(f"Import completed: {imported} records imported")
+            return {"success": True, "imported": imported}
+
+        except Exception as e:
+            logger.error(f"Error importing data: {e}")
+            return {"success": False, "error": str(e)}
 
 
 # نمونه singleton

@@ -82,7 +82,9 @@ DATA_DIR.mkdir(exist_ok=True)
     ADMIN_ADD_PLAN_DATA,
     ADMIN_ADD_PLAN_DURATION,
     ADMIN_RESTORE_FILE,
-) = range(18)
+    SELECTING_NAME_TYPE,
+    ENTERING_CUSTOM_NAME,
+) = range(20)
 
 
 # ─── دریافت پلن‌ها ───
@@ -431,17 +433,150 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • مدت: {plan['duration']} روز
 • قیمت: {price_formatted} تومان
 
+📝 **نام اکانت خود را انتخاب کنید:**
+"""
+    keyboard = [
+        [InlineKeyboardButton("🆔 آیدی تلگرام", callback_data="name_telegram_id")],
+        [InlineKeyboardButton("✏️ نام دلخواه", callback_data="name_custom")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return SELECTING_NAME_TYPE
+
+
+async def select_name_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """انتخاب نوع نام اکانت"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "back_to_select_plan":
+        # بازگشت به لیست پلن‌ها
+        return await back_to_select_plan(update, context)
+
+    if query.data == "cancel":
+        await query.edit_message_text("❌ عملیات لغو شد.")
+        return CHOOSING
+
+    user = update.effective_user
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    if query.data == "name_telegram_id":
+        # استفاده از آیدی تلگرام
+        context.user_data["account_name"] = f"tg_{user.id}"
+        context.user_data["account_comment"] = None
+
+        text = f"""
+📋 **پلن انتخاب شده:** {plan.get('name', 'نامشخص')}
+
+• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت
+• مدت: {plan.get('duration', 0)} روز
+• قیمت: {price_formatted} تومان
+
+📝 **نام اکانت:** tg_{user.id}
+
+آیا مایل به خرید این پلن هستید؟
+"""
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ تایید خرید", callback_data="confirm_purchase"),
+                InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_name_selection"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        return CONFIRMING_PURCHASE
+
+    elif query.data == "name_custom":
+        # نام دلخواه
+        text = """
+✏️ **نام دلخواه خود را وارد کنید:**
+
+⚠️ این نام در پنل Hidify نمایش داده خواهد شد.
+
+💡 نمونه: علی، محمد، user123
+"""
+        keyboard = [
+            [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_name_selection")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        return ENTERING_CUSTOM_NAME
+
+    return SELECTING_NAME_TYPE
+
+
+async def enter_custom_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت نام دلخواه"""
+    user = update.effective_user
+    custom_name = update.message.text.strip()
+
+    if not custom_name:
+        await update.message.reply_text("❌ لطفاً نامی وارد کنید.")
+        return ENTERING_CUSTOM_NAME
+
+    # ذخیره نام دلخواه
+    context.user_data["account_name"] = custom_name
+    context.user_data["account_comment"] = str(user.id)
+
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    text = f"""
+📋 **پلن انتخاب شده:** {plan.get('name', 'نامشخص')}
+
+• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت
+• مدت: {plan.get('duration', 0)} روز
+• قیمت: {price_formatted} تومان
+
+📝 **نام اکانت:** {custom_name}
+🆔 **آیدی تلگرام:** {user.id}
+
 آیا مایل به خرید این پلن هستید؟
 """
     keyboard = [
         [
             InlineKeyboardButton("✅ تایید خرید", callback_data="confirm_purchase"),
-            InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan"),
+            InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_name_selection"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
     return CONFIRMING_PURCHASE
+
+
+async def back_to_name_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به انتخاب نوع نام"""
+    query = update.callback_query
+    await query.answer()
+
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+
+    text = f"""
+📋 **پلن انتخاب شده:** {plan.get('name', 'نامشخص')}
+
+• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت
+• مدت: {plan.get('duration', 0)} روز
+• قیمت: {price_formatted} تومان
+
+📝 **نام اکانت خود را انتخاب کنید:**
+"""
+    keyboard = [
+        [InlineKeyboardButton("🆔 آیدی تلگرام", callback_data="name_telegram_id")],
+        [InlineKeyboardButton("✏️ نام دلخواه", callback_data="name_custom")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return SELECTING_NAME_TYPE
 
 
 async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -652,9 +787,12 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         gateway="card_to_card",
         tracking_code=tracking_code,
         status="pending",
+        account_name=context.user_data.get("account_name", f"tg_{user.id}"),
+        account_comment=context.user_data.get("account_comment"),
     )
 
     # ارسال پیام به ادمین
+    account_name = context.user_data.get("account_name", f"tg_{user.id}")
     admin_text = f"""
 🔔 **رسید پرداخت جدید**
 
@@ -665,6 +803,7 @@ async def confirm_card_payment(update: Update, context: ContextTypes.DEFAULT_TYP
 📋 **پلن:** {plan.get('name', 'نامشخص')}
 💰 **مبلغ:** {price_formatted} تومان
 🔢 **شماره پیگیری:** `{tracking_code}`
+📝 **نام اکانت:** {account_name}
 
 ⏰ **زمان:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
@@ -1085,7 +1224,10 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
     # پرداخت موفق - ساخت اشتراک
     plans = get_plans()
     plan = plans[plan_id]
-    username = f"tg_{user.id}"
+    
+    # استفاده از نام انتخاب شده توسط کاربر
+    username = context.user_data.get("account_name", f"tg_{user.id}")
+    account_comment = context.user_data.get("account_comment")
 
     # نمایش پیام در حال ساخت
     try:
@@ -1099,7 +1241,8 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
             name=username,
             usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
             package_days=plan["duration"],
-            enable=True
+            enable=True,
+            comment=account_comment
         )
     except Exception as e:
         logger.error(f"Error creating user in Hidify: {e}")
@@ -1241,7 +1384,17 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
 
     plans = get_plans()
     plan = plans.get(plan_id, {})
-    username = f"tg_{user_id}"
+    
+    # دریافت اطلاعات تراکنش برای نام اکانت
+    user_transactions = db.get_user_transactions(user_id)
+    latest_transaction = user_transactions[0] if user_transactions else None
+    
+    if latest_transaction and latest_transaction.get("account_name"):
+        username = latest_transaction["account_name"]
+        account_comment = latest_transaction.get("account_comment")
+    else:
+        username = f"tg_{user_id}"
+        account_comment = None
 
     # ساخت اشتراک در Hidify
     try:
@@ -1249,7 +1402,8 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
             name=username,
             usage_limit_gb=plan.get("data_limit") if plan.get("data_limit", 0) > 0 else None,
             package_days=plan.get("duration", 30),
-            enable=True
+            enable=True,
+            comment=account_comment
         )
     except Exception as e:
         logger.error(f"Error creating user: {e}")
@@ -2284,12 +2438,20 @@ def main():
                 CallbackQueryHandler(plan_selected),
                 CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
             ],
+            SELECTING_NAME_TYPE: [
+                CallbackQueryHandler(select_name_type),
+            ],
+            ENTERING_CUSTOM_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_custom_name),
+                CallbackQueryHandler(back_to_name_selection, pattern="^back_to_name_selection$"),
+            ],
             CONFIRMING_PURCHASE: [
                 CallbackQueryHandler(select_payment_method, pattern="^(confirm_purchase|cancel)$"),
                 CallbackQueryHandler(verify_payment_callback, pattern="^(verify_payment|cancel)$"),
                 CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
                 CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
                 CallbackQueryHandler(back_to_select_plan, pattern="^back_to_select_plan$"),
+                CallbackQueryHandler(back_to_name_selection, pattern="^back_to_name_selection$"),
                 CallbackQueryHandler(back_to_enter_tracking, pattern="^back_to_enter_tracking$"),
             ],
             SELECTING_PAYMENT: [
