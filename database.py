@@ -12,10 +12,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# مسیر دیتابیس
-DB_DIR = Path("data")
+# مسیر دیتابیس - از متغیر محیطی یا مسیر پیش‌فرض استفاده میکنه
+DB_DIR = Path(os.environ.get("DATA_DIR", "data"))
 DB_DIR.mkdir(exist_ok=True)
 DB_PATH = DB_DIR / "bot_database.db"
+logger.info(f"Database path: {DB_PATH}")
 
 
 class Database:

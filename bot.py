@@ -426,22 +426,20 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["selected_plan"] = plan_id
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
-    text = f"""
-📋 **پلن انتخاب شده:** {plan['name']}
-
-• حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت
-• مدت: {plan['duration']} روز
-• قیمت: {price_formatted} تومان
-
-📝 **نام اکانت خود را انتخاب کنید:**
-"""
+    text = (
+        f"📋 پلن انتخاب شده: {plan['name']}\n\n"
+        f"• حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
+        f"• مدت: {plan['duration']} روز\n"
+        f"• قیمت: {price_formatted} تومان\n\n"
+        f"📝 نام اکانت خود را انتخاب کنید:"
+    )
     keyboard = [
-        [InlineKeyboardButton("🆔 آیدی تلگرام", callback_data="name_telegram_id")],
+        [InlineKeyboardButton("🔄 انتخاب خودکار(آیدی تلگرام)", callback_data="name_telegram_id")],
         [InlineKeyboardButton("✏️ نام دلخواه", callback_data="name_custom")],
         [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(text, reply_markup=reply_markup)
     return SELECTING_NAME_TYPE
 
 
@@ -469,17 +467,14 @@ async def select_name_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["account_name"] = f"tg_{user.id}"
         context.user_data["account_comment"] = None
 
-        text = f"""
-📋 **پلن انتخاب شده:** {plan.get('name', 'نامشخص')}
-
-• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت
-• مدت: {plan.get('duration', 0)} روز
-• قیمت: {price_formatted} تومان
-
-📝 **نام اکانت:** tg_{user.id}
-
-آیا مایل به خرید این پلن هستید؟
-"""
+        text = (
+            f"📋 پلن انتخاب شده: {plan.get('name', 'نامشخص')}\n\n"
+            f"• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت\n"
+            f"• مدت: {plan.get('duration', 0)} روز\n"
+            f"• قیمت: {price_formatted} تومان\n\n"
+            f"📝 نام اکانت: tg_{user.id}\n\n"
+            f"آیا مایل به خرید این پلن هستید?"
+        )
         keyboard = [
             [
                 InlineKeyboardButton("✅ تایید خرید", callback_data="confirm_purchase"),
@@ -487,23 +482,21 @@ async def select_name_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=reply_markup)
         return CONFIRMING_PURCHASE
 
     elif query.data == "name_custom":
         # نام دلخواه
-        text = """
-✏️ **نام دلخواه خود را وارد کنید:**
-
-⚠️ این نام در پنل Hidify نمایش داده خواهد شد.
-
-💡 نمونه: علی، محمد، user123
-"""
+        text = (
+            "✏️ نام دلخواه خود را وارد کنید:\n\n"
+            "⚠️ این نام در پنل Hidify نمایش داده خواهد شد.\n\n"
+            "💡 نمونه: علی، محمد، user123"
+        )
         keyboard = [
             [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_name_selection")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=reply_markup)
         return ENTERING_CUSTOM_NAME
 
     return SELECTING_NAME_TYPE
@@ -527,18 +520,15 @@ async def enter_custom_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan = plans.get(plan_id, {})
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
-    text = f"""
-📋 **پلن انتخاب شده:** {plan.get('name', 'نامشخص')}
-
-• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت
-• مدت: {plan.get('duration', 0)} روز
-• قیمت: {price_formatted} تومان
-
-📝 **نام اکانت:** {custom_name}
-🆔 **آیدی تلگرام:** {user.id}
-
-آیا مایل به خرید این پلن هستید؟
-"""
+    text = (
+        f"📋 پلن انتخاب شده: {plan.get('name', 'نامشخص')}\n\n"
+        f"• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت\n"
+        f"• مدت: {plan.get('duration', 0)} روز\n"
+        f"• قیمت: {price_formatted} تومان\n\n"
+        f"📝 نام اکانت: {custom_name}\n"
+        f"🆔 آیدی تلگرام: {user.id}\n\n"
+        f"آیا مایل به خرید این پلن هستید?"
+    )
     keyboard = [
         [
             InlineKeyboardButton("✅ تایید خرید", callback_data="confirm_purchase"),
@@ -546,7 +536,7 @@ async def enter_custom_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(text, reply_markup=reply_markup)
     return CONFIRMING_PURCHASE
 
 
@@ -560,22 +550,20 @@ async def back_to_name_selection(update: Update, context: ContextTypes.DEFAULT_T
     plan = plans.get(plan_id, {})
     price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
 
-    text = f"""
-📋 **پلن انتخاب شده:** {plan.get('name', 'نامشخص')}
-
-• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت
-• مدت: {plan.get('duration', 0)} روز
-• قیمت: {price_formatted} تومان
-
-📝 **نام اکانت خود را انتخاب کنید:**
-"""
+    text = (
+        f"📋 پلن انتخاب شده: {plan.get('name', 'نامشخص')}\n\n"
+        f"• حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگابایت\n"
+        f"• مدت: {plan.get('duration', 0)} روز\n"
+        f"• قیمت: {price_formatted} تومان\n\n"
+        f"📝 نام اکانت خود را انتخاب کنید:"
+    )
     keyboard = [
-        [InlineKeyboardButton("🆔 آیدی تلگرام", callback_data="name_telegram_id")],
+        [InlineKeyboardButton("🔄 انتخاب خودکار(آیدی تلگرام)", callback_data="name_telegram_id")],
         [InlineKeyboardButton("✏️ نام دلخواه", callback_data="name_custom")],
         [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(text, reply_markup=reply_markup)
     return SELECTING_NAME_TYPE
 
 
