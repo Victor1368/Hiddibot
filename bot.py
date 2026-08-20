@@ -230,6 +230,114 @@ async def back_to_select_plan(update: Update, context: ContextTypes.DEFAULT_TYPE
     return await show_plans(update, context)
 
 
+async def back_to_confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به صفحه تایید خرید"""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    if not plan_id or plan_id not in plans:
+        return await back_to_menu(update, context)
+    
+    plan = plans[plan_id]
+    price_formatted = f"{plan['price']:,}".replace(",", "،")
+    text = f"""
+📋 **انتخاب پلن:** {plan['name']}
+
+• حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت
+• مدت: {plan['duration']} روز
+• قیمت: {price_formatted} تومان
+
+آیا مایل به خرید این پلن هستید؟
+"""
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ تایید خرید", callback_data="confirm_purchase"),
+            InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_plan"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return CONFIRMING_PURCHASE
+
+
+async def back_to_select_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به انتخاب روش پرداخت"""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    if not plan_id or plan_id not in plans:
+        return await back_to_menu(update, context)
+    
+    plan = plans[plan_id]
+    price_formatted = f"{plan['price']:,}".replace(",", "،")
+    text = f"""
+💳 **انتخاب روش پرداخت**
+
+📋 پلن: {plan['name']}
+💰 مبلغ: {price_formatted} تومان
+
+لطفاً روش پرداخت را انتخاب کنید:
+"""
+    keyboard = [
+        [InlineKeyboardButton("💳 درگاه آنلاین (بزودی)", callback_data="coming_soon")],
+        [InlineKeyboardButton("💵 کارت به کارت", callback_data="pay_card")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_confirm_purchase"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return SELECTING_PAYMENT
+
+
+async def back_to_enter_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به مرحله وارد کردن کد پیگیری"""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_id = context.user_data.get("selected_plan")
+    plans = get_plans()
+    plan = plans.get(plan_id, {})
+    price_formatted = f"{plan.get('price', 0):,}".replace(",", "،")
+    
+    # دریافت کارت فعال
+    active_card = get_active_card()
+    card_number = active_card.get("card_number", CARD_NUMBER)
+    card_holder = active_card.get("card_holder", CARD_HOLDER)
+    bank_name = active_card.get("bank_name", BANK_NAME)
+
+    text = f"""
+💵 **پرداخت کارت به کارت**
+
+📋 پلن: {plan.get('name', 'نامشخص')}
+💰 مبلغ: {price_formatted} تومان
+
+📌 **اطلاعات کارت:**
+```
+{card_number}
+```
+👤 **نام صاحب کارت:** {card_holder}
+🏦 **بانک:** {bank_name}
+
+⚠️ **نکات مهم:**
+• دقیقاً مبلغ بالا را واریز کنید
+• بعد از واریز، رسید پرداخت را ارسال کنید
+• رسید پرداخت برای ادمین ارسال میشود
+
+لطفاً بعد از واریز:
+• 📝 **شماره پیگیری** را وارد کنید
+• یا 📷 **اسکرین‌شات رسید** را ارسال کنید:
+"""
+    keyboard = [
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_payment"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return ENTERING_TRACKING_CODE
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور /help - راهنما"""
     help_text = """
@@ -361,7 +469,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [
         [InlineKeyboardButton("💳 درگاه آنلاین (بزودی)", callback_data="coming_soon")],
         [InlineKeyboardButton("💵 کارت به کارت", callback_data="pay_card")],
-        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_confirm_purchase"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -422,7 +530,7 @@ async def handle_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 • یا 📷 **اسکرین‌شات رسید** را ارسال کنید:
 """
         keyboard = [
-            [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+            [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_select_payment"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -461,7 +569,7 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 """
     keyboard = [
         [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
-        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_enter_tracking"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -496,7 +604,7 @@ async def enter_tracking_photo(update: Update, context: ContextTypes.DEFAULT_TYP
 """
     keyboard = [
         [InlineKeyboardButton("✅ تایید و ارسال", callback_data="confirm_card_payment")],
-        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_enter_tracking"), InlineKeyboardButton("❌ انصراف", callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -2004,15 +2112,16 @@ def main():
                 CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
                 CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
                 CallbackQueryHandler(back_to_select_plan, pattern="^back_to_select_plan$"),
+                CallbackQueryHandler(back_to_enter_tracking, pattern="^back_to_enter_tracking$"),
             ],
             SELECTING_PAYMENT: [
                 CallbackQueryHandler(handle_payment_method),
-                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
+                CallbackQueryHandler(back_to_confirm_purchase, pattern="^back_to_confirm_purchase$"),
             ],
             ENTERING_TRACKING_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_tracking_code),
                 MessageHandler(filters.PHOTO, enter_tracking_photo),
-                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
+                CallbackQueryHandler(back_to_select_payment, pattern="^back_to_select_payment$"),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
             # وضعیت‌های مدیریت ادمین
