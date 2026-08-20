@@ -21,9 +21,8 @@ BACKUP_DIR.mkdir(exist_ok=True)
 class BackupManager:
     """کلاس مدیریت پشتیبان‌گیری"""
 
-    def __init__(self, bot=None, admin_id=None):
-        self.bot = bot
-        self.admin_id = admin_id
+    def __init__(self):
+        pass
 
     def create_backup(self):
         """ایجاد پشتیبان از دیتابیس"""
@@ -103,60 +102,66 @@ class BackupManager:
                 backup.unlink()
                 logger.info(f"Deleted old backup: {backup.name}")
 
-    async def send_backup_to_admin(self):
-        """ارسال پشتیبان به ادمین"""
-        if not self.bot or not self.admin_id:
-            logger.error("Bot or admin_id not set")
-            return {"success": False, "error": "Bot or admin_id not set"}
 
-        try:
-            # ایجاد پشتیبان
-            backup_result = self.create_backup()
-            if not backup_result.get("success"):
-                return backup_result
+async def send_backup_to_admin(bot, admin_id):
+    """ارسال پشتیبان به ادمین"""
+    if not bot or not admin_id:
+        logger.error("Bot or admin_id not set")
+        return {"success": False, "error": "Bot or admin_id not set"}
 
-            backup_path = backup_result["file"]
-            backup_size = backup_result["size"]
-            backup_id = backup_result.get("backup_id")
+    try:
+        backup_mgr = BackupManager()
+        
+        # ایجاد پشتیبان
+        backup_result = backup_mgr.create_backup()
+        if not backup_result.get("success"):
+            return backup_result
 
-            # ارسال فایل به ادمین
-            with open(backup_path, "rb") as f:
-                await self.bot.send_document(
-                    chat_id=self.admin_id,
-                    document=f,
-                    caption=f"🔒 **پشتیبان خودکار دیتابیس**\n\n"
-                            f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"📊 حجم: {backup_size:,} بایت\n"
-                            f"📁 فایل: {backup_result['filename']}\n\n"
-                            f"برای بازیابی، فایل را ذخیره کرده و دستور /restore استفاده کنید.",
-                    parse_mode="Markdown",
-                )
+        backup_path = backup_result["file"]
+        backup_size = backup_result["size"]
+        backup_id = backup_result.get("backup_id")
 
-            # علامت‌گذاری آپلود شده
-            if backup_id:
-                db.mark_backup_uploaded(backup_id)
+        # ارسال فایل به ادمین
+        with open(backup_path, "rb") as f:
+            await bot.send_document(
+                chat_id=admin_id,
+                document=f,
+                caption=f"🔒 **پشتیبان خودکار دیتابیس**\n\n"
+                        f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"📊 حجم: {backup_size:,} بایت\n"
+                        f"📁 فایل: {backup_result['filename']}\n\n"
+                        f"برای بازیابی، فایل را ذخیره کرده و دستور /restore استفاده کنید.",
+                parse_mode="Markdown",
+            )
 
-            # حذف پشتیبان‌های قدیمی
-            self.delete_old_backups()
+        # علامت‌گذاری آپلود شده
+        if backup_id:
+            db.mark_backup_uploaded(backup_id)
 
-            logger.info(f"Backup sent to admin {self.admin_id}")
-            return {"success": True, "filename": backup_result["filename"]}
+        # حذف پشتیبان‌های قدیمی
+        backup_mgr.delete_old_backups()
 
-        except Exception as e:
-            logger.error(f"Error sending backup to admin: {e}")
-            return {"success": False, "error": str(e)}
+        logger.info(f"Backup sent to admin {admin_id}")
+        return {"success": True, "filename": backup_result["filename"]}
+
+    except Exception as e:
+        logger.error(f"Error sending backup to admin: {e}")
+        return {"success": False, "error": str(e)}
 
 
 class AutoBackupScheduler:
     """زمان‌بند پشتیبان‌گیری خودکار"""
 
-    def __init__(self, bot, admin_id, interval_hours=3):
-        self.bot = bot
+    def __init__(self, admin_id, interval_hours=3):
         self.admin_id = admin_id
         self.interval_hours = interval_hours
-        self.backup_manager = BackupManager(bot, admin_id)
         self.is_running = False
         self.task = None
+        self.bot = None  # bot will be set after application starts
+
+    def set_bot(self, bot):
+        """تنظیم bot بعد از شروع application"""
+        self.bot = bot
 
     async def start(self):
         """شروع پشتیبان‌گیری خودکار"""
@@ -181,11 +186,19 @@ class AutoBackupScheduler:
 
     async def _run_scheduler(self):
         """حلقه اصلی زمان‌بند"""
+        # اولین پشتیبان بعد از 10 دقیقه (نه فوری)
+        await asyncio.sleep(600)
+        
         while self.is_running:
             try:
+                if not self.bot:
+                    logger.warning("Bot not available for backup, skipping...")
+                    await asyncio.sleep(300)
+                    continue
+                    
                 # ایجاد و ارسال پشتیبان
                 logger.info("Creating automatic backup...")
-                result = await self.backup_manager.send_backup_to_admin()
+                result = await send_backup_to_admin(self.bot, self.admin_id)
 
                 if result.get("success"):
                     logger.info(f"Automatic backup completed: {result.get('filename')}")
@@ -202,5 +215,5 @@ class AutoBackupScheduler:
                 await asyncio.sleep(300)  # 5 دقیقه صبر در صورت خطا
 
 
-# نمونه singleton
+# نمونه singleton (فقط برای BackupManager)
 backup_manager = BackupManager()

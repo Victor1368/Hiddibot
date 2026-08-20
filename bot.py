@@ -18,7 +18,7 @@ from admin_manager import (
     load_plans, add_plan, update_plan, delete_plan, get_active_plans, get_all_plans, get_plan,
 )
 from database import db
-from backup import BackupManager, AutoBackupScheduler
+from backup import BackupManager, AutoBackupScheduler, send_backup_to_admin
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -1922,8 +1922,36 @@ async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # اجرای ربات
 # ═══════════════════════════════════════════════════════════════════════
 
+# بررسی متغیرهای محیطی
+def check_env_variables():
+    """بررسی متغیرهای محیطی ضروری"""
+    missing = []
+    if not BOT_TOKEN:
+        missing.append("BOT_TOKEN")
+    if not HIDIFY_PANEL_URL:
+        missing.append("HIDIFY_PANEL_URL")
+    if not HIDIFY_API_KEY:
+        missing.append("HIDIFY_API_KEY")
+    if not HIDIFY_PROXY_PATH:
+        missing.append("HIDIFY_PROXY_PATH")
+    
+    if missing:
+        logger.error(f"Missing environment variables: {', '.join(missing)}")
+        return False
+    return True
+
+
 def main():
     """راه‌اندازی ربات"""
+    # بررسی متغیرهای محیطی
+    if not check_env_variables():
+        logger.error("Bot cannot start due to missing environment variables!")
+        print("ERROR: Missing environment variables. Check .env file.")
+        return
+    
+    if not ADMIN_ID or ADMIN_ID == 0:
+        logger.warning("ADMIN_ID is not set! Admin features will not work.")
+    
     # ساخت Application
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -2028,38 +2056,10 @@ def main():
     # هندلر پیام‌های متنی
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # راه‌اندازی زمان‌بند پشتیبان‌گیری خودکار (هر 3 ساعت)
-    scheduler = AutoBackupScheduler(bot=application.bot, admin_id=ADMIN_ID, interval_hours=3)
-
     # اجرا
-    logger.info("Bot started successfully!")
+    logger.info("Bot starting...")
     print("Bot is running...")
     print("Press Ctrl+C to stop.")
-    print(f"Auto backup scheduler: every {scheduler.interval_hours} hours")
-
-    # شروع پشتیبان‌گیری خودکار پس از راه‌اندازی ربات
-    async def post_init(application):
-        # مهاجرت خودکار از JSON اگر دیتابیس خالی باشد
-        migration_result = db.auto_migrate_on_startup()
-        if migration_result.get("success") and not migration_result.get("skipped"):
-            migrated = migration_result.get("migrated", 0)
-            logger.info(f"Auto-migration completed: {migrated} records migrated")
-            # ارسال پیام به ادمین
-            if ADMIN_ID and ADMIN_ID > 0:
-                try:
-                    await application.bot.send_message(
-                        chat_id=ADMIN_ID,
-                        text=f"🔄 **مهاجرت خودکار انجام شد!**\n\n"
-                             f"📊 تعداد رکوردهای مهاجرت شده: {migrated}",
-                        parse_mode="Markdown",
-                    )
-                except:
-                    pass
-
-        await scheduler.start()
-        logger.info("Auto backup scheduler started")
-
-    application.post_init = post_init
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
