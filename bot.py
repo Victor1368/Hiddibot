@@ -81,7 +81,8 @@ DATA_DIR.mkdir(exist_ok=True)
     ADMIN_ADD_PLAN_PRICE,
     ADMIN_ADD_PLAN_DATA,
     ADMIN_ADD_PLAN_DURATION,
-) = range(17)
+    ADMIN_RESTORE_FILE,
+) = range(18)
 
 
 # ─── دریافت پلن‌ها ───
@@ -1401,6 +1402,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💳 مدیریت کارت‌ها", callback_data="admin_cards")],
         [InlineKeyboardButton("📦 مدیریت پلن‌ها", callback_data="admin_plans")],
         [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats_btn")],
+        [InlineKeyboardButton("🔒 پشتیبان‌گیری", callback_data="admin_backup")],
+        [InlineKeyboardButton("🔄 بازیابی پشتیبان", callback_data="admin_restore")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1425,6 +1428,12 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if query.data == "admin_stats_btn":
         return await admin_stats(update, context)
+
+    if query.data == "admin_backup":
+        return await admin_backup_handler(update, context)
+
+    if query.data == "admin_restore":
+        return await admin_restore_handler(update, context)
 
     return ADMIN_MENU
 
@@ -1908,6 +1917,165 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# پشتیبان‌گیری و بازیابی از پنل مدیریت
+# ═══════════════════════════════════════════════════════════════════════
+
+async def admin_backup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پشتیبان‌گیری از پنل مدیریت"""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("⏳ در حال ایجاد پشتیبان...")
+
+    backup_mgr = BackupManager()
+    result = backup_mgr.create_backup()
+
+    if result.get("success"):
+        backup_size = result["size"]
+        backup_file = result["filename"]
+
+        # ارسال فایل پشتیبان
+        with open(result["file"], "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_user.id,
+                document=f,
+                caption=f"🔒 **پشتیبان موفق!**\n\n"
+                        f"📁 فایل: {backup_file}\n"
+                        f"📊 حجم: {backup_size:,} بایت\n"
+                        f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"برای بازیابی، فایل را ذخیره کرده و از منوی مدیریت گزینه '🔄 بازیابی پشتیبان' را انتخاب کنید.",
+                parse_mode="Markdown",
+            )
+
+        # نمایش پنل مدیریت دوباره
+        keyboard = [
+            [InlineKeyboardButton("💳 مدیریت کارت‌ها", callback_data="admin_cards")],
+            [InlineKeyboardButton("📦 مدیریت پلن‌ها", callback_data="admin_plans")],
+            [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats_btn")],
+            [InlineKeyboardButton("🔒 پشتیبان‌گیری", callback_data="admin_backup")],
+            [InlineKeyboardButton("🔄 بازیابی پشتیبان", callback_data="admin_restore")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="✅ پشتیبان با موفقیت ایجاد و ارسال شد!\n\n🔧 **پنل مدیریت**",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=f"❌ خطا در ایجاد پشتیبان:\n{result.get('error', 'نامشخص')}\n\n🔧 **پنل مدیریت**",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_menu")],
+            ]),
+            parse_mode="Markdown",
+        )
+
+    return ADMIN_MENU
+
+
+# وضعیت برای بازیابی پشتیبان
+ADMIN_RESTORE_FILE = 90
+
+
+async def admin_restore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """درخواست بازیابی پشتیبان"""
+    query = update.callback_query
+    await query.answer()
+
+    text = """
+🔄 **بازیابی پشتیبان**
+
+⚠️ **نکته مهم:**
+• فایل پشتیبان (.db) را ارسال کنید
+• اطلاعات فعلی بازنویسی خواهد شد
+• یک پشتیبان از وضعیت فعلی ایجاد میشود
+
+📎 فایل پشتیبان را ارسال کنید:
+"""
+
+    keyboard = [
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_menu")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    return ADMIN_RESTORE_FILE
+
+
+async def handle_restore_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش فایل پشتیبان ارسال شده"""
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ شما ادمین نیستید!")
+        return ConversationHandler.END
+
+    document = update.message.document
+    if not document:
+        await update.message.reply_text("❌ لطفاً فایل پشتیبان (.db) را ارسال کنید.")
+        return ADMIN_RESTORE_FILE
+
+    # بررسی پسوند فایل
+    if not document.file_name.endswith('.db'):
+        await update.message.reply_text(
+            "❌ فایل نامعتبر است!\n\n"
+            "فقط فایل‌های با پسوند `.db` پذیرفته میشوند."
+        )
+        return ADMIN_RESTORE_FILE
+
+    await update.message.reply_text("⏳ در حال بازیابی پشتیبان...")
+
+    try:
+        # دانلود فایل
+        file = await document.get_file()
+        backup_path = Path("backups") / f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        backup_path.parent.mkdir(exist_ok=True)
+        await file.download_to_drive(str(backup_path))
+
+        # بازیابی
+        backup_mgr = BackupManager()
+        result = backup_mgr.restore_backup(str(backup_path))
+
+        if result.get("success"):
+            await update.message.reply_text(
+                f"✅ **بازیابی موفق!**\n\n"
+                f"📁 فایل بازیابی شده: {document.file_name}\n"
+                f"💾 پشتیبان قبلی: {result.get('pre_restore_backup', 'نامشخص')}\n\n"
+                f"🔄 ربات با تنظیمات جدید شروع به کار کرد.",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ خطا در بازیابی:\n{result.get('error', 'نامشخص')}",
+                parse_mode="Markdown",
+            )
+
+    except Exception as e:
+        logger.error(f"Error restoring backup: {e}")
+        await update.message.reply_text(
+            f"❌ خطا در پردازش فایل:\n{str(e)}"
+        )
+
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("💳 مدیریت کارت‌ها", callback_data="admin_cards")],
+        [InlineKeyboardButton("📦 مدیریت پلن‌ها", callback_data="admin_plans")],
+        [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats_btn")],
+        [InlineKeyboardButton("🔒 پشتیبان‌گیری", callback_data="admin_backup")],
+        [InlineKeyboardButton("🔄 بازیابی پشتیبان", callback_data="admin_restore")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🔧 **پنل مدیریت**",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )
+    return ADMIN_MENU
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # دستورات پشتیبان‌گیری
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -2164,6 +2332,10 @@ def main():
             ],
             ADMIN_ADD_PLAN_DURATION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_duration),
+            ],
+            ADMIN_RESTORE_FILE: [
+                MessageHandler(filters.Document.ALL, handle_restore_file),
+                CallbackQueryHandler(admin_menu_handler, pattern="^admin_back_menu$"),
             ],
         },
         fallbacks=[
