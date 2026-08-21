@@ -84,7 +84,8 @@ DATA_DIR.mkdir(exist_ok=True)
     ADMIN_RESTORE_FILE,
     SELECTING_NAME_TYPE,
     ENTERING_CUSTOM_NAME,
-) = range(20)
+    RENEWING,
+) = range(21)
 
 
 # ─── دریافت پلن‌ها ───
@@ -688,6 +689,7 @@ async def enter_tracking_code(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ENTERING_TRACKING_CODE
 
     context.user_data["tracking_code"] = tracking_code
+    context.user_data.pop("receipt_photo", None)  # پاک کردن عکس قبلی
     user = update.effective_user
     plan_id = context.user_data.get("selected_plan")
     plans = get_plans()
@@ -1047,7 +1049,7 @@ async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "❌ شما هنوز اشتراکی ندارید!\n\n"
                 "برای خرید اشتراک، روی «🛒 خرید اشتراک» کلیک کنید."
             )
-            return
+            return CHOOSING
         # اگر فقط یک اشتراک قدیمی داره، مستقیم به انتخاب پلن بره
         keyboard = []
         plans = get_plans()
@@ -1067,7 +1069,7 @@ async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "پلن مورد نظر برای تمدید را انتخاب کنید:",
             reply_markup=reply_markup,
         )
-        return
+        return RENEWING
     
     # اگر چند اشتراک داره، لیست اشتراک‌ها رو نشون بده
     keyboard = []
@@ -1110,6 +1112,7 @@ async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "کدام اشتراک را می‌خواهید تمدید دهید?",
         reply_markup=reply_markup,
     )
+    return RENEWING
 
 
 async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1119,12 +1122,23 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "cancel":
         await query.edit_message_text("❌ عملیات لغو شد.")
-        return
+        return CHOOSING
     
     # بازگشت به منوی اصلی
     if query.data == "back_to_menu":
-        await show_main_menu(update, context)
-        return
+        # نمایش منوی اصلی
+        user = update.effective_user
+        keyboard = [
+            [KeyboardButton("🛒 خرید اشتراک")],
+            [KeyboardButton("🔄 تمدید اشتراک"), KeyboardButton("📊 وضعیت اشتراک")],
+            [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنمای ربات")],
+            [KeyboardButton("📚 آموزش‌ها (بزودی)")],
+        ]
+        if user.id == ADMIN_ID:
+            keyboard.append([KeyboardButton("🔧 پنل مدیریت")])
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await query.edit_message_text("منوی اصلی:", reply_markup=reply_markup)
+        return CHOOSING
     
     # اگر اشتراک خاصی انتخاب شده (renew_sub_123)
     if query.data.startswith("renew_sub_"):
@@ -1150,11 +1164,11 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "پلن مورد نظر برای تمدید را انتخاب کنید:",
             reply_markup=reply_markup,
         )
-        return
+        return RENEWING
     
     # اگر پلن انتخاب شده (renew_plan_123)
     if not query.data.startswith("renew_plan_"):
-        return
+        return RENEWING
     
     plan_id = query.data.replace("renew_plan_", "")
     plans = get_plans()
@@ -1175,7 +1189,7 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_uuid = user_data.get("hidify_uuid", "")
         else:
             await query.edit_message_text("❌ اطلاعات کاربر یافت نشد!")
-            return
+            return CHOOSING
     else:
         # دریافت اطلاعات اشتراک از دیتابیس
         user_subscriptions = db.get_user_subscriptions(user.id)
@@ -1186,7 +1200,7 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
         if not target_sub:
             await query.edit_message_text("❌ اشتراک مورد نظر یافت نشد!")
-            return
+            return CHOOSING
         user_uuid = target_sub.get("hidify_uuid", "")
     
     await query.edit_message_text("⏳ در حال تمدید اشتراک...")
@@ -1200,7 +1214,7 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if "error" in result:
         await query.edit_message_text(f"❌ خطا در تمدید اشتراک:\n{result['error']}")
-        return
+        return CHOOSING
     
     # محاسبه تاریخ انقضای جدید
     now_ts = int(datetime.now().timestamp())
@@ -1245,6 +1259,7 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 قیمت: {price_formatted} تومان\n\n"
         f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
     )
+    return CHOOSING
 
 
 async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2547,6 +2562,10 @@ def main():
                 MessageHandler(filters.PHOTO, enter_tracking_photo),
                 CallbackQueryHandler(confirm_card_payment, pattern="^(confirm_card_payment|cancel)$"),
                 CallbackQueryHandler(back_to_select_payment, pattern="^back_to_select_payment$"),
+            ],
+            RENEWING: [
+                CallbackQueryHandler(handle_renew, pattern="^renew_"),
+                CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"),
             ],
             # وضعیت‌های مدیریت ادمین
             ADMIN_MENU: [
