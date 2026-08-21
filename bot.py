@@ -1033,36 +1033,82 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def renew_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تمدید اشتراک"""
+    """تمدید اشتراک - نمایش اشتراک‌های موجود"""
     user = update.effective_user
-    user_data = get_user_data(user.id)
-
-    if not user_data:
+    
+    # دریافت اشتراک‌های کاربر از دیتابیس
+    subscriptions = db.get_user_subscriptions(user.id)
+    
+    if not subscriptions:
+        # بررسی اطلاعات قدیمی
+        user_data = get_user_data(user.id)
+        if not user_data or not user_data.get("hidify_uuid"):
+            await update.message.reply_text(
+                "❌ شما هنوز اشتراکی ندارید!\n\n"
+                "برای خرید اشتراک، روی «🛒 خرید اشتراک» کلیک کنید."
+            )
+            return
+        # اگر فقط یک اشتراک قدیمی داره، مستقیم به انتخاب پلن بره
+        keyboard = []
+        plans = get_plans()
+        for plan_id, plan in plans.items():
+            price_formatted = f"{plan['price']:,}".replace(",", "،")
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"🔄 {plan['name']} - {plan['description']} - {price_formatted} تومان",
+                    callback_data=f"renew_plan_{plan_id}",
+                )
+            ])
+        keyboard.append([InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "❌ شما هنوز اشتراکی ندارید!\n\n"
-            "برای خرید اشتراک، روی «🛒 خرید اشتراک» کلیک کنید."
+            "🔄 تمدید اشتراک:\n\n"
+            "پلن مورد نظر برای تمدید را انتخاب کنید:",
+            reply_markup=reply_markup,
         )
         return
-
-    # نمایش پلن‌های تمدید
-    plans = get_plans()
+    
+    # اگر چند اشتراک داره، لیست اشتراک‌ها رو نشون بده
     keyboard = []
-    for plan_id, plan in plans.items():
-        price_formatted = f"{plan['price']:,}".replace(",", "،")
+    for sub in subscriptions:
+        # محاسبه وضعیت اشتراک
+        status_emoji = "🟢" if sub["status"] == "active" else "🔴"
+        status_text = "فعال" if sub["status"] == "active" else "منقضی"
+        
+        # محاسبه حجم باقیمانده
+        data_limit = sub.get("data_limit", 0)
+        data_used = sub.get("data_used", 0)
+        if data_limit and data_limit > 0:
+            data_info = f"📊 {data_limit - data_used:.1f} از {data_limit} گیگ باقیمانده"
+        else:
+            data_info = "📊 نامحدود"
+        
+        # تاریخ انقضا
+        expire_date = sub.get("expire_date", "")
+        if expire_date:
+            try:
+                expire_dt = datetime.fromisoformat(expire_date)
+                if expire_dt < datetime.now():
+                    data_info = "🔴 منقضی شده"
+            except:
+                pass
+        
+        button_text = f"{status_emoji} {sub['plan_name']} - {status_text}\n{data_info}"
         keyboard.append([
             InlineKeyboardButton(
-                f"🔄 {plan['name']} - {plan['description']} - {price_formatted} تومان",
-                callback_data=f"renew_{plan_id}",
+                button_text,
+                callback_data=f"renew_sub_{sub['id']}",
             )
         ])
+    
     keyboard.append([InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu")])
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🔄 **تمدید اشتراک:**\n\n"
-        "پلن مورد نظر برای تمدید را انتخاب کنید:",
+        "🔄 تمدید اشتراک:\n\n"
+        "کدام اشتراک را می‌خواهید تمدید دهید?",
         reply_markup=reply_markup,
-        parse_mode="Markdown",
     )
 
 
@@ -1070,77 +1116,134 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """پردازش درخواست تمدید"""
     query = update.callback_query
     await query.answer()
-
+    
     if query.data == "cancel":
         await query.edit_message_text("❌ عملیات لغو شد.")
         return
-
-    if not query.data.startswith("renew_"):
+    
+    # بازگشت به منوی اصلی
+    if query.data == "back_to_menu":
+        await show_main_menu(update, context)
         return
-
-    plan_id = query.data.replace("renew_", "")
+    
+    # اگر اشتراک خاصی انتخاب شده (renew_sub_123)
+    if query.data.startswith("renew_sub_"):
+        sub_id = int(query.data.replace("renew_sub_", ""))
+        context.user_data["renew_subscription_id"] = sub_id
+        
+        # نمایش پلن‌های تمدید
+        plans = get_plans()
+        keyboard = []
+        for plan_id, plan in plans.items():
+            price_formatted = f"{plan['price']:,}".replace(",", "،")
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"🔄 {plan['name']} - {plan['description']} - {price_formatted} تومان",
+                    callback_data=f"renew_plan_{plan_id}",
+                )
+            ])
+        keyboard.append([InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_menu")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "🔄 انتخاب پلن جدید:\n\n"
+            "پلن مورد نظر برای تمدید را انتخاب کنید:",
+            reply_markup=reply_markup,
+        )
+        return
+    
+    # اگر پلن انتخاب شده (renew_plan_123)
+    if not query.data.startswith("renew_plan_"):
+        return
+    
+    plan_id = query.data.replace("renew_plan_", "")
     plans = get_plans()
     if plan_id not in plans:
         await query.edit_message_text("❌ پلن نامعتبر!")
         return
-
+    
     plan = plans[plan_id]
     user = update.effective_user
-    user_data = get_user_data(user.id)
-
-    if not user_data:
-        await query.edit_message_text("❌ اطلاعات کاربر یافت نشد!")
-        return
-
-    await query.edit_message_text("⏳ در حال تمدید اشتراک...")
-
-    # محاسبه تاریخ انقضای جدید
-    current_expire = user_data.get("expire_at", int(datetime.now().timestamp()))
-    if current_expire < int(datetime.now().timestamp()):
-        # اگر منقضی شده، از الان شروع شود
-        new_expire = int((datetime.now() + timedelta(days=plan["duration"])).timestamp())
+    
+    # دریافت subscription_id از context
+    sub_id = context.user_data.get("renew_subscription_id")
+    
+    # اگر subscription_id نیست، از اشتراک اصلی استفاده کن
+    if not sub_id:
+        user_data = get_user_data(user.id)
+        if user_data:
+            user_uuid = user_data.get("hidify_uuid", "")
+        else:
+            await query.edit_message_text("❌ اطلاعات کاربر یافت نشد!")
+            return
     else:
-        # اگر هنوز فعال است، به مدت اضافه شود
-        new_expire = current_expire + (plan["duration"] * 86400)
-
+        # دریافت اطلاعات اشتراک از دیتابیس
+        user_subscriptions = db.get_user_subscriptions(user.id)
+        target_sub = None
+        for s in user_subscriptions:
+            if s["id"] == sub_id:
+                target_sub = s
+                break
+        if not target_sub:
+            await query.edit_message_text("❌ اشتراک مورد نظر یافت نشد!")
+            return
+        user_uuid = target_sub.get("hidify_uuid", "")
+    
+    await query.edit_message_text("⏳ در حال تمدید اشتراک...")
+    
     # بروزرسانی در Hidify
-    user_uuid = user_data.get("hidify_uuid", "")
     result = hidify.update_user(
         user_uuid,
         usage_limit_GB=plan["data_limit"] if plan["data_limit"] > 0 else None,
         package_days=plan["duration"]
     )
-
+    
     if "error" in result:
         await query.edit_message_text(f"❌ خطا در تمدید اشتراک:\n{result['error']}")
         return
+    
+    # محاسبه تاریخ انقضای جدید
+    now_ts = int(datetime.now().timestamp())
+    new_expire = now_ts + (plan["duration"] * 86400)
 
-    # بروزرسانی اطلاعات محلی
-    user_data["plan"] = plan_id
-    user_data["expire_at"] = new_expire
-    user_data["data_limit"] = plan["data_limit"]
-    save_user_data(user.id, user_data)
+    # بروزرسانی اطلاعات کاربر
+    user_data = get_user_data(user.id)
+    if user_data:
+        user_data["plan"] = plan_id
+        user_data["expire_at"] = new_expire
+        user_data["data_limit"] = plan["data_limit"]
+        save_user_data(user.id, user_data)
 
-    # ذخیره اشتراک جدید در دیتابیس
-    db.save_subscription(
-        telegram_id=user.id,
-        hidify_uuid=user_uuid,
-        plan_id=plan_id,
-        plan_name=plan["name"],
-        data_limit=plan["data_limit"],
-        duration=plan["duration"],
-        status="active",
-    )
+    # بروزرسانی اشتراک در دیتابیس
+    if sub_id:
+        db.update_subscription(sub_id, {
+            "plan_id": plan_id,
+            "plan_name": plan["name"],
+            "data_limit": plan["data_limit"],
+            "duration": plan["duration"],
+            "expire_date": datetime.fromtimestamp(new_expire).isoformat(),
+            "status": "active",
+        })
+    else:
+        # ذخیره اشتراک جدید
+        db.save_subscription(
+            telegram_id=user.id,
+            hidify_uuid=user_uuid,
+            plan_id=plan_id,
+            plan_name=plan["name"],
+            data_limit=plan["data_limit"],
+            duration=plan["duration"],
+            status="active",
+        )
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
     await query.edit_message_text(
-        f"✅ **اشتراک شما با موفقیت تمدید شد!**\n\n"
+        f"✅ اشتراک شما با موفقیت تمدید شد!\n\n"
         f"📋 پلن: {plan['name']}\n"
         f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
         f"⏰ مدت: {plan['duration']} روز\n"
         f"💰 قیمت: {price_formatted} تومان\n\n"
         f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
-        parse_mode="Markdown",
     )
 
 
@@ -2384,6 +2487,13 @@ def main():
         logger.error("Bot cannot start due to missing environment variables!")
         print("ERROR: Missing environment variables. Check .env file.")
         return
+    
+    # بازیابی خودکار دیتابیس
+    restore_result = db.auto_restore()
+    if restore_result.get("restored"):
+        logger.info(f"Database restored: {restore_result}")
+    else:
+        logger.info(f"Auto-restore skipped: {restore_result.get('reason', 'unknown')}")
     
     if not ADMIN_ID or ADMIN_ID == 0:
         logger.warning("ADMIN_ID is not set! Admin features will not work.")

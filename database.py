@@ -12,11 +12,38 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# مسیر دیتابیس - از متغیر محیطی یا مسیر پیش‌فرض استفاده میکنه
-DB_DIR = Path(os.environ.get("DATA_DIR", "data"))
-DB_DIR.mkdir(exist_ok=True)
+# مسیر دیتابیس - از Railway persistent storage یا متغیر محیطی استفاده میکنه
+# Railway: اگر Volume دارید، DATA_DIR=/data تنظیم کنید
+# در غیر این صورت، دیتابیس در مسیر پروژه ذخیره میشه
+POSSIBLE_PATHS = [
+    Path(os.environ.get("DATA_DIR", "")),  # Railway Volume
+    Path("/data"),  # Railway default persistent
+    Path(os.path.expanduser("~/.vpn-bot/data")),  # Home directory
+    Path("data"),  # Fallback to project directory
+]
+
+DB_DIR = None
+for path in POSSIBLE_PATHS:
+    if path and path != Path(""):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            # تست نوشتن
+            test_file = path / ".write_test"
+            test_file.write_text("test")
+            test_file.unlink()
+            DB_DIR = path
+            break
+        except (PermissionError, OSError) as e:
+            logger.warning(f"Cannot write to {path}: {e}")
+            continue
+
+if DB_DIR is None:
+    DB_DIR = Path("data")
+    DB_DIR.mkdir(exist_ok=True)
+
 DB_PATH = DB_DIR / "bot_database.db"
 logger.info(f"Database path: {DB_PATH}")
+logger.info(f"Data directory: {DB_DIR}")
 
 
 class Database:
@@ -119,6 +146,69 @@ class Database:
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully")
+
+    def auto_restore(self):
+        """بازیابی خودکار از آخرین پشتیبان اگر دیتابیس خالی باشد"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # بررسی تعداد کاربران
+            cursor.execute("SELECT COUNT(*) FROM users")
+            count = cursor.fetchone()[0]
+            conn.close()
+            
+            if count > 0:
+                logger.info(f"Database has {count} users, no restore needed")
+                return {"restored": False, "reason": "database_not_empty"}
+            
+            logger.info("Database is empty, looking for backups...")
+            
+            # جستجو برای فایل‌های پشتیبان
+            backup_dirs = [
+                Path("backups"),
+                Path("/data/backups"),
+                DB_DIR / "backups",
+                Path(os.path.expanduser("~/.vpn-bot/data/backups")),
+            ]
+            
+            all_backups = []
+            for backup_dir in backup_dirs:
+                if backup_dir.exists():
+                    for f in backup_dir.glob("backup_*.db"):
+                        all_backups.append(f)
+            
+            if not all_backups:
+                logger.info("No backup files found")
+                return {"restored": False, "reason": "no_backups_found"}
+            
+            # مرتب‌سازی بر اساس تاریخ (جدیدترین اول)
+            all_backups.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            latest_backup = all_backups[0]
+            
+            logger.info(f"Restoring from backup: {latest_backup.name}")
+            
+            # کپی پشتیبان به مسیر دیتابیس فعلی
+            import shutil
+            shutil.copy2(latest_backup, self.db_path)
+            
+            # بررسی نتیجه
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            restored_count = cursor.fetchone()[0]
+            conn.close()
+            
+            logger.info(f"Restored {restored_count} users from {latest_backup.name}")
+            return {
+                "restored": True,
+                "backup_file": latest_backup.name,
+                "users_restored": restored_count,
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in auto_restore: {e}")
+            return {"restored": False, "error": str(e)}
 
     # ═══════════════════════════════════════════════════════════════
     # مدیریت مشتریان
