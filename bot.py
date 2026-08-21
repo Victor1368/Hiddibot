@@ -145,7 +145,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("🛒 خرید اشتراک")],
         [KeyboardButton("🔄 تمدید اشتراک"), KeyboardButton("📊 وضعیت اشتراک")],
-        [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنما")],
+        [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنمای ربات")],
+        [KeyboardButton("📚 آموزش‌ها (بزودی)")],
     ]
     
     # اضافه کردن دکمه ادمین
@@ -164,7 +165,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • 🔄 تمدید اشتراک
 • 📊 مشاهده وضعیت اشتراک
 • 🔗 دریافت لینک اتصال
-• ❓ راهنما
+• ❓ راهنمای ربات
+• 📚 آموزش‌ها (بزودی)
 """
     
     if user.id == ADMIN_ID:
@@ -211,7 +213,8 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("🛒 خرید اشتراک")],
         [KeyboardButton("🔄 تمدید اشتراک"), KeyboardButton("📊 وضعیت اشتراک")],
-        [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنما")],
+        [KeyboardButton("🔗 لینک اتصال"), KeyboardButton("❓ راهنمای ربات")],
+        [KeyboardButton("📚 آموزش‌ها (بزودی)")],
     ]
     if user.id == ADMIN_ID:
         keyboard.append([KeyboardButton("🔧 پنل مدیریت")])
@@ -1319,8 +1322,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_status(update, context)
     elif text == "🔗 لینک اتصال":
         return await get_link(update, context)
-    elif text == "❓ راهنما":
+    elif text == "❓ راهنمای ربات":
         return await help_command(update, context)
+    elif text == "📚 آموزش‌ها (بزودی)":
+        await update.message.reply_text("⏳ این بخش بزودی اضافه خواهد شد!")
     elif text == "🔧 پنل مدیریت" and update.effective_user.id == ADMIN_ID:
         return await admin_panel(update, context)
     else:
@@ -2399,7 +2404,8 @@ def main():
                 MessageHandler(filters.Regex("^🔄 تمدید اشتراک$"), renew_subscription),
                 MessageHandler(filters.Regex("^📊 وضعیت اشتراک$"), show_status),
                 MessageHandler(filters.Regex("^🔗 لینک اتصال$"), get_link),
-                MessageHandler(filters.Regex("^❓ راهنما$"), help_command),
+                MessageHandler(filters.Regex("^❓ راهنمای ربات$"), help_command),
+                MessageHandler(filters.Regex(r"^📚 آموزش\u200cها \(بزودی\)$"), help_command),
                 MessageHandler(filters.Regex("^🔧 پنل مدیریت$"), admin_panel),
             ],
             SELECTING_PLAN: [
