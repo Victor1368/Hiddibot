@@ -7,7 +7,7 @@ import os
 import shutil
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from database import db
 
@@ -126,12 +126,11 @@ async def send_backup_to_admin(bot, admin_id):
             await bot.send_document(
                 chat_id=admin_id,
                 document=f,
-                caption=f"🔒 **پشتیبان خودکار دیتابیس**\n\n"
+                caption=f"🔒 پشتیبان خودکار دیتابیس\n\n"
                         f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                         f"📊 حجم: {backup_size:,} بایت\n"
                         f"📁 فایل: {backup_result['filename']}\n\n"
-                        f"برای بازیابی، فایل را ذخیره کرده و دستور /restore استفاده کنید.",
-                parse_mode="Markdown",
+                        f"برای بازیابی، فایل را ذخیره کرده و دکمه «🔄 بازیابی پشتیبان» را بزنید.",
             )
 
         # علامت‌گذاری آپلود شده
@@ -150,14 +149,13 @@ async def send_backup_to_admin(bot, admin_id):
 
 
 class AutoBackupScheduler:
-    """زمان‌بند پشتیبان‌گیری خودکار"""
+    """زمان‌بند پشتیبان‌گیری خودکار - ساعت 12 و 24"""
 
-    def __init__(self, admin_id, interval_hours=3):
+    def __init__(self, admin_id):
         self.admin_id = admin_id
-        self.interval_hours = interval_hours
         self.is_running = False
         self.task = None
-        self.bot = None  # bot will be set after application starts
+        self.bot = None
 
     def set_bot(self, bot):
         """تنظیم bot بعد از شروع application"""
@@ -171,7 +169,7 @@ class AutoBackupScheduler:
 
         self.is_running = True
         self.task = asyncio.create_task(self._run_scheduler())
-        logger.info(f"Auto backup scheduler started (every {self.interval_hours} hours)")
+        logger.info("Auto backup scheduler started (every 12 hours at 12:00 and 00:00)")
 
     async def stop(self):
         """توقف پشتیبان‌گیری خودکار"""
@@ -184,29 +182,60 @@ class AutoBackupScheduler:
                 pass
         logger.info("Auto backup scheduler stopped")
 
+    def _seconds_until_next(self, hour: int) -> float:
+        """محاسبه ثانیه‌های باقیمانده تا ساعت مشخص"""
+        now = datetime.now()
+        target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return (target - now).total_seconds()
+
     async def _run_scheduler(self):
-        """حلقه اصلی زمان‌بند"""
-        # اولین پشتیبان بعد از 10 دقیقه (نه فوری)
-        await asyncio.sleep(600)
-        
+        """حلقه اصلی زمان‌بند - ارسال در ساعت 12 و 24"""
+        # اولین پشتیبان بعد از 1 دقیقه برای تست
+        logger.info("First backup in 1 minute for testing...")
+        await asyncio.sleep(60)
+
         while self.is_running:
             try:
-                if not self.bot:
-                    logger.warning("Bot not available for backup, skipping...")
-                    await asyncio.sleep(300)
-                    continue
-                    
-                # ایجاد و ارسال پشتیبان
-                logger.info("Creating automatic backup...")
-                result = await send_backup_to_admin(self.bot, self.admin_id)
+                # ارسال پشتیبان فوری برای تست
+                if self.bot:
+                    logger.info("Creating automatic backup...")
+                    result = await send_backup_to_admin(self.bot, self.admin_id)
+                    if result.get("success"):
+                        logger.info(f"Automatic backup completed: {result.get('filename')}")
+                    else:
+                        logger.error(f"Automatic backup failed: {result.get('error')}")
 
-                if result.get("success"):
-                    logger.info(f"Automatic backup completed: {result.get('filename')}")
-                else:
-                    logger.error(f"Automatic backup failed: {result.get('error')}")
+                # انتظار تا ساعت 12 بعدی
+                wait_12 = self._seconds_until_next(12)
+                logger.info(f"Next backup at 12:00 (in {wait_12/3600:.1f} hours)")
+                await asyncio.sleep(wait_12)
 
-                # انتظار تا پشتیبان بعدی
-                await asyncio.sleep(self.interval_hours * 3600)
+                if not self.is_running:
+                    break
+
+                # ارسال پشتیبان ساعت 12
+                if self.bot:
+                    logger.info("Creating 12:00 backup...")
+                    result = await send_backup_to_admin(self.bot, self.admin_id)
+                    if result.get("success"):
+                        logger.info(f"12:00 backup completed: {result.get('filename')}")
+
+                # انتظار تا ساعت 24 (نیمه‌شب)
+                wait_24 = self._seconds_until_next(0)
+                logger.info(f"Next backup at 00:00 (in {wait_24/3600:.1f} hours)")
+                await asyncio.sleep(wait_24)
+
+                if not self.is_running:
+                    break
+
+                # ارسال پشتیبان ساعت 24
+                if self.bot:
+                    logger.info("Creating 00:00 backup...")
+                    result = await send_backup_to_admin(self.bot, self.admin_id)
+                    if result.get("success"):
+                        logger.info(f"00:00 backup completed: {result.get('filename')}")
 
             except asyncio.CancelledError:
                 break

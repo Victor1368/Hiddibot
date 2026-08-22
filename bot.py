@@ -1176,47 +1176,79 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_id = query.data.replace("renew_plan_", "")
     plans = get_plans()
     if plan_id not in plans:
-        await query.edit_message_text("❌ پلن نامعتبر!")
-        return
+        try:
+            await query.edit_message_text("❌ پلن نامعتبر!")
+        except:
+            await query.answer("❌ پلن نامعتبر!")
+        return CHOOSING
     
     plan = plans[plan_id]
     user = update.effective_user
     
     # دریافت subscription_id از context
     sub_id = context.user_data.get("renew_subscription_id")
+    target_sub = None
+    user_uuid = ""
     
-    # اگر subscription_id نیست، از اشتراک اصلی استفاده کن
-    if not sub_id:
-        user_data = get_user_data(user.id)
-        if user_data:
-            user_uuid = user_data.get("hidify_uuid", "")
-        else:
-            await query.edit_message_text("❌ اطلاعات کاربر یافت نشد!")
-            return CHOOSING
-    else:
+    # دریافت UUID از اشتراک
+    if sub_id:
         # دریافت اطلاعات اشتراک از دیتابیس
         user_subscriptions = db.get_user_subscriptions(user.id)
-        target_sub = None
         for s in user_subscriptions:
             if s["id"] == sub_id:
                 target_sub = s
                 break
         if not target_sub:
-            await query.edit_message_text("❌ اشتراک مورد نظر یافت نشد!")
+            try:
+                await query.edit_message_text("❌ اشتراک مورد نظر یافت نشد!")
+            except:
+                await query.answer("❌ اشتراک یافت نشد!")
             return CHOOSING
         user_uuid = target_sub.get("hidify_uuid", "")
+    else:
+        user_data = get_user_data(user.id)
+        if user_data:
+            user_uuid = user_data.get("hidify_uuid", "")
+        else:
+            try:
+                await query.edit_message_text("❌ اطلاعات کاربر یافت نشد!")
+            except:
+                await query.answer("❌ اطلاعات یافت نشد!")
+            return CHOOSING
     
-    await query.edit_message_text("⏳ در حال تمدید اشتراک...")
+    if not user_uuid:
+        try:
+            await query.edit_message_text("❌ UUID کاربر یافت نشد!")
+        except:
+            await query.answer("❌ UUID یافت نشد!")
+        return CHOOSING
+    
+    try:
+        await query.edit_message_text("⏳ در حال تمدید اشتراک...")
+    except:
+        pass
     
     # بروزرسانی در Hidify
-    result = await hidify.update_user(
-        user_uuid,
-        usage_limit_GB=plan["data_limit"] if plan["data_limit"] > 0 else None,
-        package_days=plan["duration"]
-    )
+    try:
+        result = await hidify.update_user(
+            user_uuid,
+            usage_limit_GB=plan["data_limit"] if plan["data_limit"] > 0 else None,
+            package_days=plan["duration"]
+        )
+    except Exception as e:
+        logger.error(f"Error updating user in Hidify: {e}")
+        try:
+            await query.edit_message_text(f"❌ خطا در اتصال به Hidify:\n{str(e)[:200]}")
+        except:
+            pass
+        return CHOOSING
     
     if "error" in result:
-        await query.edit_message_text(f"❌ خطا در تمدید اشتراک:\n{result['error']}")
+        logger.error(f"Hidify update error: {result['error']}")
+        try:
+            await query.edit_message_text(f"❌ خطا در تمدید اشتراک:\n{result['error'][:200]}")
+        except:
+            pass
         return CHOOSING
     
     # محاسبه تاریخ انقضای جدید
@@ -2655,6 +2687,23 @@ def main():
 
     # هندلر پیام‌های متنی
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # ─── راه‌اندازی پشتیبان‌گیری خودکار ───
+    backup_scheduler = AutoBackupScheduler(admin_id=ADMIN_ID)
+
+    async def post_init(application):
+        """تنظیمات بعد از شروع application"""
+        backup_scheduler.set_bot(application.bot)
+        await backup_scheduler.start()
+        logger.info("Auto backup scheduler started")
+
+    async def post_shutdown(application):
+        """توقف قبل از بسته شدن"""
+        await backup_scheduler.stop()
+        logger.info("Auto backup scheduler stopped")
+
+    application.post_init = post_init
+    application.post_shutdown = post_shutdown
 
     # اجرا
     logger.info("Bot starting...")
