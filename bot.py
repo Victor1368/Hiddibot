@@ -1451,32 +1451,26 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"Error updating transaction: {e}")
         # ادامه بده حتی اگه تراکنش آپدیت نشد
 
-    # نمایش پیام موفقیت
+    # نمایش پیام موفقیت + لینک اتصال خودکار
     price_formatted = f"{plan['price']:,}".replace(",", "،")
+    subscription_url = f"{HIDIFY_PANEL_URL}/{USER_PROXY_PATH}/{user_uuid}/"
+    data_text = str(plan['data_limit']) if plan['data_limit'] > 0 else 'نامحدود'
+    success_text = (
+        f"✅ پرداخت موفق! اشتراک فعال شد!\n\n"
+        f"📋 پلن: {plan['name']}\n"
+        f"📊 حجم: {data_text} گیگابایت\n"
+        f"⏰ مدت: {plan['duration']} روز\n"
+        f"💰 قیمت: {price_formatted} تومان\n\n"
+        f"🔗 لینک اتصال شما:\n"
+        f"`{subscription_url}`\n\n"
+        f"⚠️ این لینک را در اپلیکیشن VPN کپی کنید."
+    )
     try:
-        await query.edit_message_text(
-            f"✅ **پرداخت موفق! اشتراک فعال شد!**\n\n"
-            f"📋 پلن: {plan['name']}\n"
-            f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
-            f"⏰ مدت: {plan['duration']} روز\n"
-            f"💰 قیمت: {price_formatted} تومان\n\n"
-            f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
-            parse_mode="Markdown",
-        )
+        await query.edit_message_text(success_text)
     except Exception as e:
         logger.error(f"Error sending success message: {e}")
-        # تلاش برای ارسال پیام جدید
         try:
-            await context.bot.send_message(
-                chat_id=user.id,
-                text=f"✅ **پرداخت موفق! اشتراک فعال شد!**\n\n"
-                     f"📋 پلن: {plan['name']}\n"
-                     f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
-                     f"⏰ مدت: {plan['duration']} روز\n"
-                     f"💰 قیمت: {price_formatted} تومان\n\n"
-                     f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
-                parse_mode="Markdown",
-            )
+            await context.bot.send_message(chat_id=user.id, text=success_text)
         except:
             pass
     return CHOOSING
@@ -1617,17 +1611,22 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown",
     )
 
-    # پیام به کاربر
+    # پیام به کاربر + لینک اتصال خودکار
+    plan_data_limit = plan.get('data_limit', 0)
+    plan_duration = plan.get('duration', 30)
+    data_text = str(plan_data_limit) if plan_data_limit > 0 else 'نامحدود'
+    subscription_url = f"{HIDIFY_PANEL_URL}/{USER_PROXY_PATH}/{user_uuid}/"
+    user_text = (
+        f"✅ پرداخت تایید شد! اشتراک فعال شد!\n\n"
+        f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
+        f"📊 حجم: {data_text} گیگ\n"
+        f"⏰ مدت: {plan_duration} روز\n\n"
+        f"🔗 لینک اتصال شما:\n"
+        f"`{subscription_url}`\n\n"
+        f"⚠️ این لینک را در اپلیکیشن VPN کپی کنید."
+    )
     try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"✅ **پرداخت تایید شد! اشتراک فعال شد!**\n\n"
-                 f"📋 پلن: {plan.get('name', 'نامشخص')}\n"
-                 f"📊 حجم: {plan.get('data_limit', 0) if plan.get('data_limit', 0) > 0 else 'نامحدود'} گیگ\n"
-                 f"⏰ مدت: {plan.get('duration', 30)} روز\n\n"
-                 f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
-            parse_mode="Markdown",
-        )
+        await context.bot.send_message(chat_id=user_id, text=user_text)
     except Exception as e:
         logger.error(f"Error sending message to user: {e}")
 
