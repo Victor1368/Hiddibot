@@ -980,7 +980,9 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             expire_fmt = expire_date[:10] if expire_date else "نامشخص"
 
+        account_name = sub.get("account_name") or f"tg_{user.id}"
         text += f"**{i}. {plan_name}** - {status_icon}\n"
+        text += f"   📝 نام اکانت: {account_name}\n"
         text += f"   {data_text}\n"
         text += f"   📅 شروع: {start_fmt} | انقضا: {expire_fmt}\n\n"
 
@@ -988,7 +990,7 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = get_user_data(user.id)
     if user_data:
         user_uuid = user_data.get("hidify_uuid", "")
-        hidify_user = hidify.get_user(user_uuid)
+        hidify_user = await hidify.get_user(user_uuid)
         if "error" not in hidify_user:
             is_active = hidify_user.get("is_active", False)
             used_gb = round(hidify_user.get("current_usage_GB", 0), 2)
@@ -1024,7 +1026,8 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subscription_url = f"{HIDIFY_PANEL_URL}/{USER_PROXY_PATH}/{uuid}/"
         status_icon = "🟢" if status == "active" else "🔴"
 
-        text += f"**{i}. {status_icon} {plan_name}**\n"
+        account_name = sub.get("account_name") or f"tg_{user.id}"
+        text += f"**{i}. {status_icon} {plan_name}** - {account_name}\n"
         text += f"`{subscription_url}`\n\n"
 
     text += "⚠️ **نکات مهم:**\n"
@@ -1206,7 +1209,7 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("⏳ در حال تمدید اشتراک...")
     
     # بروزرسانی در Hidify
-    result = hidify.update_user(
+    result = await hidify.update_user(
         user_uuid,
         usage_limit_GB=plan["data_limit"] if plan["data_limit"] > 0 else None,
         package_days=plan["duration"]
@@ -1240,6 +1243,12 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
     else:
         # ذخیره اشتراک جدید
+        # دریافت نام اکانت از اشتراک قبلی یا پیش‌فرض
+        account_name = None
+        account_comment = None
+        if target_sub:
+            account_name = target_sub.get("account_name")
+            account_comment = target_sub.get("account_comment")
         db.save_subscription(
             telegram_id=user.id,
             hidify_uuid=user_uuid,
@@ -1248,6 +1257,8 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data_limit=plan["data_limit"],
             duration=plan["duration"],
             status="active",
+            account_name=account_name or f"tg_{user.id}",
+            account_comment=account_comment,
         )
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
@@ -1334,7 +1345,7 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
 
     # ساخت کاربر در Hidify
     try:
-        result = hidify.create_user(
+        result = await hidify.create_user(
             name=username,
             usage_limit_gb=plan["data_limit"] if plan["data_limit"] > 0 else None,
             package_days=plan["duration"],
@@ -1380,6 +1391,8 @@ async def verify_payment_callback(update: Update, context: ContextTypes.DEFAULT_
             data_limit=plan["data_limit"],
             duration=plan["duration"],
             status="active",
+            account_name=username,
+            account_comment=account_comment,
         )
         logger.info(f"User data and subscription saved: {user.id} -> {user_uuid}")
     except Exception as e:
@@ -1497,7 +1510,7 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
 
     # ساخت اشتراک در Hidify
     try:
-        result = hidify.create_user(
+        result = await hidify.create_user(
             name=username,
             usage_limit_gb=plan.get("data_limit") if plan.get("data_limit", 0) > 0 else None,
             package_days=plan.get("duration", 30),
@@ -1535,6 +1548,8 @@ async def admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TY
             data_limit=plan.get("data_limit", 0),
             duration=plan.get("duration", 30),
             status="active",
+            account_name=username,
+            account_comment=account_comment,
         )
     except Exception as e:
         logger.error(f"Error saving user data: {e}")
@@ -2128,7 +2143,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # دریافت اطلاعات Hidify
     try:
-        users = hidify.get_users()
+        users = await hidify.get_users()
         hidify_users = len(users) if isinstance(users, list) else 0
     except:
         hidify_users = 0
@@ -2509,6 +2524,9 @@ def main():
         logger.info(f"Database restored: {restore_result}")
     else:
         logger.info(f"Auto-restore skipped: {restore_result.get('reason', 'unknown')}")
+    
+    # مهاجرت ستون‌های جدید برای دیتابیس‌های قدیمی
+    db.migrate_add_columns()
     
     if not ADMIN_ID or ADMIN_ID == 0:
         logger.warning("ADMIN_ID is not set! Admin features will not work.")

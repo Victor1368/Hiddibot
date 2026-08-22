@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hidify API Client - v2 API
+Hidify API Client - v2 API (Async)
 """
 
 import httpx
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class HidifyClient:
-    """کلاینت اتصال به پنل Hidify v2"""
+    """کلاینت اتصال به پنل Hidify v2 (async)"""
 
     def __init__(self, panel_url: str, api_key: str, proxy_path: str):
         self.panel_url = panel_url.rstrip("/")
@@ -23,25 +23,25 @@ class HidifyClient:
             "Content-Type": "application/json",
         }
 
-    def _request(self, method: str, endpoint: str, data: dict = None) -> dict:
-        """ارسال درخواست به API (sync)"""
+    async def _request(self, method: str, endpoint: str, data: dict = None) -> dict:
+        """ارسال درخواست به API (async)"""
         url = f"{self.base_api}{endpoint}"
         try:
-            with httpx.Client(
+            async with httpx.AsyncClient(
                 verify=False,
                 follow_redirects=True,
                 timeout=httpx.Timeout(30.0)
             ) as client:
                 if method == "GET":
-                    response = client.get(url, headers=self.headers, params=data)
+                    response = await client.get(url, headers=self.headers, params=data)
                 elif method == "POST":
-                    response = client.post(url, headers=self.headers, json=data)
+                    response = await client.post(url, headers=self.headers, json=data)
                 elif method == "PUT":
-                    response = client.put(url, headers=self.headers, json=data)
+                    response = await client.put(url, headers=self.headers, json=data)
                 elif method == "PATCH":
-                    response = client.patch(url, headers=self.headers, json=data)
+                    response = await client.patch(url, headers=self.headers, json=data)
                 elif method == "DELETE":
-                    response = client.delete(url, headers=self.headers)
+                    response = await client.delete(url, headers=self.headers)
                 else:
                     return {"error": "Invalid method"}
 
@@ -59,15 +59,15 @@ class HidifyClient:
 
     # ─── User Management ───
 
-    def get_users(self) -> list:
+    async def get_users(self) -> list:
         """دریافت لیست کاربران"""
-        return self._request("GET", "/admin/user/")
+        return await self._request("GET", "/admin/user/")
 
-    def get_user(self, uuid: str) -> dict:
+    async def get_user(self, uuid: str) -> dict:
         """دریافت اطلاعات یک کاربر"""
-        return self._request("GET", f"/admin/user/{uuid}/")
+        return await self._request("GET", f"/admin/user/{uuid}/")
 
-    def create_user(self, name: str, usage_limit_gb: float = None,
+    async def create_user(self, name: str, usage_limit_gb: float = None,
                     package_days: int = None, enable: bool = True,
                     comment: str = None) -> dict:
         """ساخت کاربر جدید"""
@@ -82,36 +82,36 @@ class HidifyClient:
             payload["package_days"] = package_days
         if comment is not None:
             payload["comment"] = comment
-        return self._request("POST", "/admin/user/", payload)
+        return await self._request("POST", "/admin/user/", payload)
 
-    def update_user(self, uuid: str, **kwargs) -> dict:
+    async def update_user(self, uuid: str, **kwargs) -> dict:
         """بروزرسانی اطلاعات کاربر"""
-        return self._request("PATCH", f"/admin/user/{uuid}/", kwargs)
+        return await self._request("PATCH", f"/admin/user/{uuid}/", kwargs)
 
-    def delete_user(self, uuid: str) -> dict:
+    async def delete_user(self, uuid: str) -> dict:
         """حذف کاربر"""
-        return self._request("DELETE", f"/admin/user/{uuid}/")
+        return await self._request("DELETE", f"/admin/user/{uuid}/")
 
     # ─── Admin Management ───
 
-    def get_admins(self) -> list:
+    async def get_admins(self) -> list:
         """دریافت لیست ادمین‌ها"""
-        return self._request("GET", "/admin/admin_user/")
+        return await self._request("GET", "/admin/admin_user/")
 
-    def get_current_admin(self) -> dict:
+    async def get_current_admin(self) -> dict:
         """دریافت اطلاعات ادمین فعلی"""
-        return self._request("GET", "/admin/me/")
+        return await self._request("GET", "/admin/me/")
 
     # ─── System ───
 
-    def get_panel_info(self) -> dict:
+    async def get_panel_info(self) -> dict:
         """دریافت اطلاعات پنل"""
-        return self._request("GET", "/panel/info/")
+        return await self._request("GET", "/panel/info/")
 
-    def get_server_status(self) -> dict:
+    async def get_server_status(self) -> dict:
         """دریافت وضعیت سرور"""
-        return self._request("GET", "/admin/server_status/")
+        return await self._request("GET", "/admin/server_status/")
 
-    def ping(self) -> dict:
+    async def ping(self) -> dict:
         """تست اتصال"""
-        return self._request("GET", "/panel/ping/")
+        return await self._request("GET", "/panel/ping/")

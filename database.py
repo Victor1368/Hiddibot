@@ -88,6 +88,8 @@ class Database:
                 hidify_uuid TEXT,
                 plan_id TEXT,
                 plan_name TEXT,
+                account_name TEXT,
+                account_comment TEXT,
                 data_limit REAL DEFAULT 0,
                 data_used REAL DEFAULT 0,
                 duration INTEGER DEFAULT 30,
@@ -305,7 +307,7 @@ class Database:
     # مدیریت اشتراک‌ها
     # ═══════════════════════════════════════════════════════════════
 
-    def save_subscription(self, telegram_id, hidify_uuid, plan_id, plan_name, data_limit, duration, data_used=0, status="active"):
+    def save_subscription(self, telegram_id, hidify_uuid, plan_id, plan_name, data_limit, duration, data_used=0, status="active", account_name=None, account_comment=None):
         """ذخیره اشتراک جدید"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -315,9 +317,9 @@ class Database:
         try:
             cursor.execute("""
                 INSERT INTO subscriptions
-                (telegram_id, hidify_uuid, plan_id, plan_name, data_limit, data_used, duration, start_date, expire_date, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (telegram_id, hidify_uuid, plan_id, plan_name, data_limit, data_used, duration, now, expire_date, status, now, now))
+                (telegram_id, hidify_uuid, plan_id, plan_name, account_name, account_comment, data_limit, data_used, duration, start_date, expire_date, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (telegram_id, hidify_uuid, plan_id, plan_name, account_name, account_comment, data_limit, data_used, duration, now, expire_date, status, now, now))
             conn.commit()
             subscription_id = cursor.lastrowid
             logger.info(f"Subscription {subscription_id} saved for user {telegram_id}")
@@ -773,6 +775,28 @@ class Database:
 
         except Exception as e:
             logger.error(f"Error in auto-migration: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    def migrate_add_columns(self):
+        """اضافه کردن ستون‌های جدید به جداول قدیمی"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # بررسی وجود ستون‌ها در subscriptions
+            cursor.execute("PRAGMA table_info(subscriptions)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "account_name" not in columns:
+                cursor.execute("ALTER TABLE subscriptions ADD COLUMN account_name TEXT")
+                logger.info("Added account_name column to subscriptions")
+            if "account_comment" not in columns:
+                cursor.execute("ALTER TABLE subscriptions ADD COLUMN account_comment TEXT")
+                logger.info("Added account_comment column to subscriptions")
+            conn.commit()
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"Error migrating columns: {e}")
             return {"success": False, "error": str(e)}
         finally:
             conn.close()
