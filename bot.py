@@ -1294,14 +1294,23 @@ async def handle_renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     price_formatted = f"{plan['price']:,}".replace(",", "،")
-    await query.edit_message_text(
+    data_text = str(plan['data_limit']) if plan['data_limit'] > 0 else 'نامحدود'
+    success_text = (
         f"✅ اشتراک شما با موفقیت تمدید شد!\n\n"
         f"📋 پلن: {plan['name']}\n"
-        f"📊 حجم: {plan['data_limit'] if plan['data_limit'] > 0 else 'نامحدود'} گیگابایت\n"
+        f"📊 حجم: {data_text} گیگابایت\n"
         f"⏰ مدت: {plan['duration']} روز\n"
         f"💰 قیمت: {price_formatted} تومان\n\n"
-        f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید.",
+        f"برای دریافت لینک اتصال، روی دکمه «🔗 لینک اتصال» کلیک کنید."
     )
+    try:
+        await query.edit_message_text(success_text)
+    except Exception as e:
+        logger.error(f"Error sending success message: {e}")
+        try:
+            await query.answer("✅ تمدید موفقیت‌آمیز بود!")
+        except:
+            pass
     return CHOOSING
 
 
@@ -2677,8 +2686,7 @@ def main():
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("import", import_command))
 
-    # هندلر تمدید (خارج از ConversationHandler)
-    application.add_handler(CallbackQueryHandler(handle_renew, pattern="^renew_"))
+    # هندلر کپی لینک (خارج از ConversationHandler)
     application.add_handler(CallbackQueryHandler(copy_link_callback, pattern="^copy_link$"))
 
     # هندلرهای ادمین
